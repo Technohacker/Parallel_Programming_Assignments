@@ -1,0 +1,5 @@
+{
+    "clangd.arguments": [
+        "--query-driver=/usr/lib64/openmpi/bin/mpic++"
+    ]
+}
