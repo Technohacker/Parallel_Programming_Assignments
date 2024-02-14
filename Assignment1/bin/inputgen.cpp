@@ -2,7 +2,6 @@
 #include <ios>
 #include <iostream>
 #include <random>
-#include <stdfloat>
 #include <string>
 
 #include "matrix.h"

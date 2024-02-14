@@ -5,6 +5,7 @@
 
 #include "matrix.h"
 #include "matrix_io_parallel.h"
+#include "timing_parallel.h"
 
 int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
@@ -48,6 +49,10 @@ int main(int argc, char **argv) {
   MPI_Comm_rank(cart_comm, &cart_rank);
   MPI_Cart_coords(cart_comm, cart_rank, 2, cart_coords);
 
+  if (cart_rank == 0) {
+    std::cout << "Matrix Size: " << matrix_size << std::endl;
+  }
+
   // Allocate space for the A, B and C submatrices
   int submatrix_size = matrix_size / process_grid_side;
   float_matrix A(submatrix_size, submatrix_size);
@@ -81,12 +86,6 @@ int main(int argc, char **argv) {
   matrix_parallel_io self_io(matrix_size, submatrix_size, cart_dims,
                              cart_coords);
 
-  MPI_Barrier(cart_comm);
-  std::cout << "Self: (" << cart_coords[0] << ", " << cart_coords[1] << "), Skew A: (" << a_skew[0] << ", " << a_skew[1] << ")" << std::endl;
-  MPI_Barrier(cart_comm);
-  std::cout << "Self: (" << cart_coords[0] << ", " << cart_coords[1] << "), Skew B: (" << b_skew[0] << ", " << b_skew[1] << ")" << std::endl;
-  MPI_Barrier(cart_comm);
-
   a_start_io.read_start(A, file_a);
   b_start_io.read_start(B, file_b);
 
@@ -101,6 +100,8 @@ int main(int argc, char **argv) {
   MPI_Cart_shift(cart_comm, 1, 1, &cart_rank, &recv_neighbour_a);
   MPI_Cart_shift(cart_comm, 0, 1, &cart_rank, &recv_neighbour_b);
 
+  timer_parallel timer;
+  timer.start(cart_comm);
   for (int step = 0; step < process_grid_side; step += 1) {
     // Local multiply
     for (int i = 0; i < submatrix_size; i += 1) {
@@ -118,6 +119,10 @@ int main(int argc, char **argv) {
                          0, recv_neighbour_a, 0, cart_comm, MPI_STATUS_IGNORE);
     MPI_Sendrecv_replace(B.buf_ptr(), B.buf_size(), MPI_FLOAT, send_neighbour_b,
                          1, recv_neighbour_b, 1, cart_comm, MPI_STATUS_IGNORE);
+  }
+  double elapsed_time = timer.end(cart_comm);
+  if (cart_rank == 0) {
+    std::cout << "Time taken: " << elapsed_time << std::endl;
   }
 
   self_io.write(C, file_c);

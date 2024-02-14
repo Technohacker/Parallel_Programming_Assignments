@@ -3,6 +3,7 @@
 
 #include "matrix.h"
 #include "matrix_io_serial.h"
+#include "timing_serial.h"
 
 int main(int argc, char **argv) {
   if (argc != 4) {
@@ -32,6 +33,10 @@ int main(int argc, char **argv) {
   // Reserve the output matrix
   float_matrix C(matrix_size, matrix_size);
 
+  std::cout << "Matrix Size: " << matrix_size << std::endl;
+
+  timer_serial timer;
+  timer.start();
   // Compute the result
   for (int i = 0; i < matrix_size; i += 1) {
     for (int j = 0; j < matrix_size; j += 1) {
@@ -43,6 +48,7 @@ int main(int argc, char **argv) {
       C[{i, j}] = sum;
     }
   }
+  std::cout << "Time taken: " << timer.end() << std::endl;
 
   // And write
   io.write(C, file_c);

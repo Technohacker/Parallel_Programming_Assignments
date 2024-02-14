@@ -16,11 +16,13 @@ clean:
 		util/matrix.o \
 		util/matrix_io_serial.o \
 		util/matrix_io_parallel.o \
+		util/timing_serial.o \
+		util/timing_parallel.o \
 	|| true
 
 bin/inputgen: util/matrix.o util/matrix_io_serial.o
-bin/serial: util/matrix.o util/matrix_io_serial.o
-bin/parallel_cannon: util/matrix.o util/matrix_io_parallel.o
+bin/serial: util/matrix.o util/matrix_io_serial.o util/timing_serial.o
+bin/parallel_cannon: util/matrix.o util/matrix_io_parallel.o util/timing_parallel.o
 
 generate_inputs: bin/inputgen
 	mkdir -p results
