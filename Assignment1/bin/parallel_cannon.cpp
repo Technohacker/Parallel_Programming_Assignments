@@ -73,8 +73,8 @@ int main(int argc, char **argv) {
   int a_skew[] = {0, 0};
   int b_skew[] = {0, 0};
 
-  MPI_Cart_shift(cart_comm, 1, -cart_coords[0], &cart_rank, &a_skew_rank);
-  MPI_Cart_shift(cart_comm, 0, -cart_coords[1], &cart_rank, &b_skew_rank);
+  MPI_Cart_shift(cart_comm, 1, cart_coords[0], &cart_rank, &a_skew_rank);
+  MPI_Cart_shift(cart_comm, 0, cart_coords[1], &cart_rank, &b_skew_rank);
 
   MPI_Cart_coords(cart_comm, a_skew_rank, 2, a_skew);
   MPI_Cart_coords(cart_comm, b_skew_rank, 2, b_skew);
