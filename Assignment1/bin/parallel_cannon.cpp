@@ -54,10 +54,11 @@ int main(int argc, char **argv) {
   }
 
   // Allocate space for the A, B and C submatrices
-  int submatrix_size = matrix_size / process_grid_side;
-  float_matrix A(submatrix_size, submatrix_size);
-  float_matrix B(submatrix_size, submatrix_size);
-  float_matrix C(submatrix_size, submatrix_size);
+  int sub_size = matrix_size / process_grid_side;
+  int submatrix_size[] = {sub_size, sub_size};
+  float_matrix A(sub_size, sub_size);
+  float_matrix B(sub_size, sub_size);
+  float_matrix C(sub_size, sub_size);
 
   // Open the three files
   MPI_File file_a, file_b, file_c;
@@ -104,10 +105,10 @@ int main(int argc, char **argv) {
   timer.start(cart_comm);
   for (int step = 0; step < process_grid_side; step += 1) {
     // Local multiply
-    for (int i = 0; i < submatrix_size; i += 1) {
-      for (int j = 0; j < submatrix_size; j += 1) {
+    for (int i = 0; i < sub_size; i += 1) {
+      for (int j = 0; j < sub_size; j += 1) {
         // float sum = 0.0;
-        for (int k = 0; k < submatrix_size; k += 1) {
+        for (int k = 0; k < sub_size; k += 1) {
           C[{i, j}] += A[{i, k}] * B[{k, j}];
         }
       }

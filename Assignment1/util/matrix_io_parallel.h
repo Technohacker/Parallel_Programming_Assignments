@@ -10,7 +10,7 @@ private:
     MPI_Datatype submatrix_type;
 
 public:
-    matrix_parallel_io(int matrix_size, int submatrix_size, int cart_dims[], int cart_coords[]);
+    matrix_parallel_io(int matrix_size, int submatrix_size[], int cart_dims[], int cart_coords[]);
 
     void read_start(float_matrix &matrix, MPI_File &file);
     void read_end(float_matrix &matrix, MPI_File &file);

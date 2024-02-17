@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
       C[{i, j}] = sum;
     }
   }
-  std::cout << "Time taken: " << timer.end() << std::endl;
+  std::cout << "Matrix Size: " << matrix_size << ". Time taken: " << timer.end() << std::endl;
 
   // And write
   io.write(C, file_c);

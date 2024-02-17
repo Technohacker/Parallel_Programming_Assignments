@@ -3,13 +3,12 @@
 #include "matrix.h"
 #include "matrix_io_parallel.h"
 
-matrix_parallel_io::matrix_parallel_io(int matrix_size, int submatrix_size, int cart_dims[], int cart_coords[]) {
+matrix_parallel_io::matrix_parallel_io(int matrix_size, int submatrix_size[], int cart_dims[], int cart_coords[]) {
   int file_element_dims[] = {matrix_size, matrix_size};
-  int submatrix_dims[] = {submatrix_size, submatrix_size};
-  int submatrix_starts[] = {cart_coords[0] * submatrix_size,
-                            cart_coords[1] * submatrix_size};
+  int submatrix_starts[] = {cart_coords[0] * submatrix_size[0],
+                            cart_coords[1] * submatrix_size[1]};
 
-  MPI_Type_create_subarray(2, file_element_dims, submatrix_dims,
+  MPI_Type_create_subarray(2, file_element_dims, submatrix_size,
                            submatrix_starts, MPI_ORDER_C, MPI_FLOAT,
                            &submatrix_type);
   MPI_Type_commit(&submatrix_type);
