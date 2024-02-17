@@ -2,11 +2,13 @@
 #include <iostream>
 #include <mpi.h>
 #include <ostream>
-#include <vector>
 
 #include "matrix.h"
 #include "matrix_io_parallel.h"
 #include "timing_parallel.h"
+
+// Make a communicator over every member in the same dimension of a provided cartesian communicator (implemented below)
+MPI_Comm make_dim_comm(MPI_Comm cart_comm, int dim, int dim_size, int cart_coords[]);
 
 int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
@@ -85,25 +87,8 @@ int main(int argc, char **argv) {
   MPI_Group cart_group;
   MPI_Comm_group(cart_comm, &cart_group);
 
-  MPI_Group row_group, col_group;
-  std::vector<int> row_ranks, col_ranks;
-  for (int step = 0; step < process_grid_side; step += 1) {
-    int row_member[] = {cart_coords[0], step};
-    int col_member[] = {step, cart_coords[1]};
-
-    int row_member_rank, col_member_rank;
-    MPI_Cart_rank(cart_comm, row_member, &row_member_rank);
-    MPI_Cart_rank(cart_comm, col_member, &col_member_rank);
-
-    row_ranks.push_back(row_member_rank);
-    col_ranks.push_back(col_member_rank);
-  }
-  MPI_Group_incl(cart_group, row_ranks.size(), row_ranks.data(), &row_group);
-  MPI_Group_incl(cart_group, col_ranks.size(), col_ranks.data(), &col_group);
-
-  MPI_Comm row_comm, col_comm;
-  MPI_Comm_create(cart_comm, row_group, &row_comm);
-  MPI_Comm_create(cart_comm, col_group, &col_comm);
+  MPI_Comm row_comm = make_dim_comm(cart_comm, 1, process_grid_side, cart_coords);
+  MPI_Comm col_comm = make_dim_comm(cart_comm, 0, process_grid_side, cart_coords);
 
   int row_rank, col_rank;
   MPI_Comm_rank(row_comm, &row_rank);
@@ -147,4 +132,25 @@ int main(int argc, char **argv) {
 
   self_io.write(C, file_c);
   MPI_Finalize();
+}
+
+MPI_Comm make_dim_comm(MPI_Comm cart_comm, int dim, int dim_size, int cart_coords[]) {
+  MPI_Group cart_group;
+  MPI_Comm_group(cart_comm, &cart_group);
+
+  MPI_Group dim_group;
+  int dim_ranks[dim_size];
+  for (int step = 0; step < dim_size; step += 1) {
+    int dim_member[] = {cart_coords[0], cart_coords[1]};
+    dim_member[dim] = step;
+
+    MPI_Cart_rank(cart_comm, dim_member, &dim_ranks[step]);
+  }
+
+  MPI_Group_incl(cart_group, dim_size, dim_ranks, &dim_group);
+
+  MPI_Comm dim_comm;
+  MPI_Comm_create(cart_comm, dim_group, &dim_comm);
+
+  return dim_comm;
 }
