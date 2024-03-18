@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cstddef>
+#include <unordered_map>
 #include <vector>
 
-struct dest_with_weight {
-    int dest;
-    int weight;
-};
+#include "common.h"
 
-typedef std::vector<std::vector<dest_with_weight>> adjacency_list;
+// Each element in the returned vector contains the reverse-edge
+// that connects the indexed node to its parent in the shortest path
+std::unordered_map<node_t, std::vector<path_segment_t>> delta_step(adjacency_list &graph, std::vector<node_t> sources);

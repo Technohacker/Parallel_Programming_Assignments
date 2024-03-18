@@ -1,27 +1,61 @@
 #include <iostream>
 #include <stdio.h>
 #include <string>
+#include <vector>
 
+#include "common.h"
 #include "impl.h"
 
 extern "C" {
 #include "mmio.h"
 }
 
+struct program_args {
+  std::string file;
+  std::vector<node_t> src_vertices;
+};
+
+bool parse_args(program_args &args, int argc, char **argv);
+bool read_graph(program_args &args, adjacency_list &graph);
+
 int main(int argc, char **argv) {
-  // Parse args
-  if (argc != 2) {
-    std::cout << "Usage: " << argv[0] << " <file>" << std::endl;
+  program_args args;
+  adjacency_list graph;
+
+  if (!parse_args(args, argc, argv)) {
+    return 1;
+  }
+  if (!read_graph(args, graph)) {
     return 1;
   }
 
-  std::string file = argv[1];
+  auto paths = delta_step(graph, args.src_vertices);
 
+  return 0;
+}
+
+bool parse_args(program_args &args, int argc, char **argv) {
+  // Parse args
+  if (argc < 3) {
+    std::cout << "Usage: " << argv[0] << " <file> [<source vertices>...]"
+              << std::endl;
+    return false;
+  }
+
+  args.file = argv[1];
+  for (int i = 2; i < argc; i += 1) {
+    args.src_vertices.push_back(std::stoi(argv[i]));
+  }
+
+  return true;
+}
+
+bool read_graph(program_args &args, adjacency_list &graph) {
   // Open the matrix file
-  FILE *mm_file = fopen(file.c_str(), "r");
+  FILE *mm_file = fopen(args.file.c_str(), "r");
   if (mm_file == nullptr) {
     std::cout << "Matrix file not found" << std::endl;
-    return 1;
+    return false;
   }
 
   MM_typecode mat_type;
@@ -29,7 +63,7 @@ int main(int argc, char **argv) {
   int res = mm_read_banner(mm_file, &mat_type);
   if (res != 0) {
     std::cout << "Error reading banner: " << res << std::endl;
-    return 1;
+    return false;
   }
 
   if (!(mm_is_sparse(mat_type) &&
@@ -38,7 +72,7 @@ int main(int argc, char **argv) {
         mm_is_symmetric(mat_type))) {
     std::cout << "Wrong matrix type. Expected sparse, symmetric matrix. Found: "
               << mm_typecode_to_str(mat_type) << std::endl;
-    return 1;
+    return false;
   }
 
   // HACK: Set the integer type just in case
@@ -49,12 +83,10 @@ int main(int argc, char **argv) {
 
   if (M != N) {
     std::cout << "Matrix should be square" << std::endl;
-    return 1;
+    return false;
   }
 
   // Read the matrix
-  adjacency_list graph(M);
-
   for (int i = 0; i < num_edges; i += 1) {
     int src, dest, weight;
     int res = mm_read_mtx_crd_entry(mm_file, &src, &dest, &weight, nullptr,
@@ -62,7 +94,7 @@ int main(int argc, char **argv) {
 
     if (res != 0) {
       std::cout << "Error reading file: " << res << std::endl;
-      return 1;
+      return false;
     }
 
     // Node numbers are considered to be 0-indexed for both src and dest
@@ -77,5 +109,5 @@ int main(int argc, char **argv) {
     });
   }
 
-  return 0;
+  return true;
 }

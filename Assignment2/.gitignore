@@ -1,3 +1,4 @@
+*.a
 *.o
 src/delta-step-cpu
 src/delta-step-gpu
