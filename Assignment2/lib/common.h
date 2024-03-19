@@ -10,19 +10,20 @@
 // ===========================
 
 typedef int node_t;
+typedef int weight_t;
 
 // Edge with an implicit source made clear from context
 struct edge_t {
   node_t dest;
-  int weight;
+  weight_t weight;
 };
 
 // A Graph represented as an adjacency list
-typedef std::vector<std::vector<edge_t>> adjacency_list;
+typedef std::vector<std::vector<edge_t>> adjacency_list_t;
 
 // Values for special cases
 const node_t INVALID_NODE = -1;
-const int INFINITE_DIST = std::numeric_limits<int>::max();
+const weight_t INFINITE_DIST = std::numeric_limits<int>::max();
 
 // ===========================
 // ========= Output ==========
@@ -30,7 +31,7 @@ const int INFINITE_DIST = std::numeric_limits<int>::max();
 
 // Represents a portion of a path for an implicit destination node
 struct path_segment_t {
-  int total_cost;
+  weight_t total_cost;
   node_t parent;
 };
 
@@ -42,19 +43,19 @@ struct path_segment_t {
 const int DELTA = 10;
 
 // Represents a node with a total cost for use in bucketing
-struct node_with_cost {
+struct node_with_cost_t {
   node_t node;
-  int total_cost;
+  weight_t total_cost;
 };
 
 // Min-queue for bucketing
-typedef std::priority_queue<node_with_cost, std::vector<node_with_cost>,
-                            std::greater<node_with_cost>>
+typedef std::priority_queue<node_with_cost_t, std::vector<node_with_cost_t>,
+                            std::greater<node_with_cost_t>>
     weight_queue_t;
 // Operators for bucketing
-bool operator<(node_with_cost a, node_with_cost b);
-bool operator>(node_with_cost a, node_with_cost b);
-bool operator==(node_with_cost a, node_with_cost b);
+bool operator<(node_with_cost_t a, node_with_cost_t b);
+bool operator>(node_with_cost_t a, node_with_cost_t b);
+bool operator==(node_with_cost_t a, node_with_cost_t b);
 
 // Finds the bucket number of the top of the queue. -1 if no element remains
 int next_bucket_num(weight_queue_t &queue, int delta);
@@ -62,6 +63,6 @@ int next_bucket_num(weight_queue_t &queue, int delta);
 // the same bucket number
 //
 // Discards elements that have a better total cost as stored in paths
-std::vector<node_with_cost>
-get_bucket_for_number(weight_queue_t &queue, std::vector<path_segment_t> &paths,
+std::vector<node_with_cost_t>
+get_bucket_for_number(weight_queue_t &queue, weight_t distances[],
                       int current_bucket_num, int delta);

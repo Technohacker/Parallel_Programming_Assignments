@@ -16,11 +16,11 @@ struct program_args {
 };
 
 bool parse_args(program_args &args, int argc, char **argv);
-bool read_graph(program_args &args, adjacency_list &graph);
+bool read_graph(program_args &args, adjacency_list_t &graph);
 
 int main(int argc, char **argv) {
   program_args args;
-  adjacency_list graph;
+  adjacency_list_t graph;
 
   if (!parse_args(args, argc, argv)) {
     return 1;
@@ -50,7 +50,7 @@ bool parse_args(program_args &args, int argc, char **argv) {
   return true;
 }
 
-bool read_graph(program_args &args, adjacency_list &graph) {
+bool read_graph(program_args &args, adjacency_list_t &graph) {
   // Open the matrix file
   FILE *mm_file = fopen(args.file.c_str(), "r");
   if (mm_file == nullptr) {
@@ -99,6 +99,7 @@ bool read_graph(program_args &args, adjacency_list &graph) {
 
     // Node numbers are considered to be 0-indexed for both src and dest
     // Add both edges to make it undirected
+    graph.resize(N);
     graph.at(src - 1).push_back({
         .dest = dest - 1,
         .weight = weight,

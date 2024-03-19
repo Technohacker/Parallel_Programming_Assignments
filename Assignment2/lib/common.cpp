@@ -1,14 +1,14 @@
 #include "common.h"
 
-bool operator<(node_with_cost a, node_with_cost b) {
+bool operator<(node_with_cost_t a, node_with_cost_t b) {
     return a.total_cost < b.total_cost;
 }
 
-bool operator>(node_with_cost a, node_with_cost b) {
+bool operator>(node_with_cost_t a, node_with_cost_t b) {
     return a.total_cost > b.total_cost;
 }
 
-bool operator==(node_with_cost a, node_with_cost b) {
+bool operator==(node_with_cost_t a, node_with_cost_t b) {
     return a.total_cost == b.total_cost;
 }
 
@@ -25,15 +25,15 @@ int next_bucket_num(weight_queue_t &queue, int delta) {
   }
 }
 
-std::vector<node_with_cost>
-get_bucket_for_number(weight_queue_t &queue, std::vector<path_segment_t> &paths,
+std::vector<node_with_cost_t>
+get_bucket_for_number(weight_queue_t &queue, weight_t distances[],
                       int current_bucket_num, int delta) {
-  std::vector<node_with_cost> bucket;
+  std::vector<node_with_cost_t> bucket;
 
   while (!queue.empty()) {
-    node_with_cost pending_elem = queue.top();
+    node_with_cost_t pending_elem = queue.top();
     // Skip this node if we've got a better cost already
-    if (pending_elem.total_cost > paths[pending_elem.node].total_cost) {
+    if (pending_elem.total_cost > distances[pending_elem.node]) {
       queue.pop();
       continue;
     }
