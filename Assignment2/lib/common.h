@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <queue>
 #include <vector>
@@ -64,5 +65,5 @@ int next_bucket_num(weight_queue_t &queue, int delta);
 //
 // Discards elements that have a better total cost as stored in paths
 std::vector<node_with_cost_t>
-get_bucket_for_number(weight_queue_t &queue, weight_t distances[],
+get_bucket_for_number(weight_queue_t &queue, std::function<weight_t (node_t&)> get_distance,
                       int current_bucket_num, int delta);
