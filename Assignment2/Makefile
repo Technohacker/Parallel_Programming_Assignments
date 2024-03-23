@@ -1,6 +1,7 @@
 NVCC := nvcc
 
-CXXFLAGS := -I./lib
+CXXFLAGS := -I./lib -g
+CUFLAGS := $(CXXFLAGS) -G
 
 all: src/delta-step-cpu src/delta-step-gpu
 
@@ -11,10 +12,10 @@ src/delta-step-cpu: src/main.o src/cpu.o lib/libutil.a
 	$(CXX) -o src/delta-step-cpu src/main.o src/cpu.o lib/libutil.a
 
 src/delta-step-gpu: src/main.o src/gpu.o lib/libutil.a
-	$(NVCC) -o src/delta-step-gpu src/main.o src/gpu.o lib/libutil.a
+	$(NVCC) $(CUFLAGS) -o src/delta-step-gpu src/main.o src/gpu.o lib/libutil.a
 
-src/gpu.o: src/gpu.cu
-	$(NVCC) $(CXXFLAGS) -o src/gpu.o -c src/gpu.cu
+src/gpu.o: src/gpu.cu src/gpu.cuh
+	$(NVCC) $(CUFLAGS) -o src/gpu.o -c src/gpu.cu
 
 clean:
 	rm -f \
