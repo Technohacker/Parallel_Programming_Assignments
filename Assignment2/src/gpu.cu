@@ -9,58 +9,6 @@
 
 #include "gpu.cuh"
 
-// Adjacency list in a form more amenable for GPU manipulation
-class gpu_adjacency_list_t {
-private:
-  unified_buffer_t<size_t> node_starts;
-  unified_buffer_t<node_t> node_neighbours;
-  unified_buffer_t<weight_t> out_edge_weights;
-
-public:
-  gpu_adjacency_list_t(adjacency_list_t &graph) {
-    size_t N = graph.size();
-    // ======= Node Starts
-    this->node_starts.reallocate(N + 1);
-
-    // Compute all start positions
-    this->node_starts[0] = 0;
-    for (size_t i = 0; i < N; i += 1) {
-      this->node_starts[i + 1] = this->node_starts[i] + graph[i].size();
-    }
-    // Keep the number of neighbours handy for later
-    size_t num_neighbours = this->node_starts[N];
-
-    // ======= Node Neighbours
-    this->node_neighbours.reallocate(num_neighbours);
-    this->out_edge_weights.reallocate(num_neighbours);
-
-    int index = 0;
-    for (auto src : graph) {
-      for (auto neighbour : src) {
-        this->node_neighbours[index] = neighbour.dest;
-        this->out_edge_weights[index] = neighbour.weight;
-        index += 1;
-      }
-    }
-  }
-
-  void release() {
-    this->node_starts.release();
-    this->node_neighbours.release();
-    this->out_edge_weights.release();
-  }
-
-  __device__ size_t get_neighbours(node_t source, node_t **neighours_start, weight_t** out_weights_start) {
-    int start_index = this->node_starts[source];
-    int end_index = this->node_starts[source + 1];
-
-    *neighours_start = &this->node_neighbours[start_index];
-    *out_weights_start = &this->out_edge_weights[start_index];
-
-    return end_index - start_index;
-  }
-};
-
 // Host-side logic for a single source
 std::vector<path_segment_t>
 delta_step_single(adjacency_list_t &host_graph,
@@ -172,8 +120,25 @@ delta_step_single(adjacency_list_t &host_graph,
       CUDA_CHECK(cudaDeviceSynchronize());
 
       // Read the return buffer to insert into the queue
-      for (size_t source_index = 0; source_index < bucket.size(); source_index += 1) {
-        auto elem = bucket[source_index];
+      for (size_t i = 0; i < bucket.size(); i += 1) {
+        for (size_t j = device_return_starts[i]; j < device_return_starts[i + 1]; j += 1) {
+          auto elem = device_return[j];
+          if (elem.node == INVALID_NODE) {
+            continue;
+          }
+
+          if (elem.total_cost < paths[elem.node].total_cost) {
+            // Update our paths list
+            paths[elem.node] = {
+                .total_cost = elem.total_cost,
+                .parent = bucket[i].node,
+            };
+
+            // And queue it for bucketing
+            queue.push(elem);
+          }
+
+        }
       }
 
       device_bucket.release();

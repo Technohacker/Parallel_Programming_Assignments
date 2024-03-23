@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <fstream>
 #include <iostream>
@@ -27,6 +28,17 @@ bool parse_args(program_args_t &args, int argc, char **argv);
 bool read_graph(program_args_t &args, adjacency_list_t &graph);
 std::vector<final_path_t> compute_paths(std::vector<path_segment_t> &path_segments);
 
+using Time = std::chrono::steady_clock;
+using double_sec = std::chrono::duration<double>;
+
+auto time_start() {
+    return Time::now();
+}
+
+double time_end(std::chrono::time_point<Time> start) {
+    return (std::chrono::duration_cast<std::chrono::milliseconds>((Time::now() - start)).count()) / 1000.0;
+}
+
 int main(int argc, char **argv) {
   program_args_t args;
   adjacency_list_t graph;
@@ -38,7 +50,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  auto start = time_start();
   auto paths = delta_step(graph, args.src_vertices);
+  auto duration = time_end(start);
+
+  std::cout << "Time taken: " << duration << std::endl;
 
   for (size_t i = 0; i < args.src_vertices.size(); i += 1) {
     node_t vertex = args.src_vertices[i];

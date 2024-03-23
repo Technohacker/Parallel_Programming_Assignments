@@ -1,7 +1,7 @@
 NVCC := nvcc
 
-CXXFLAGS := -I./lib -g
-CUFLAGS := $(CXXFLAGS) -G
+CXXFLAGS := -I./lib
+CUFLAGS := $(CXXFLAGS)
 
 all: src/delta-step-cpu src/delta-step-gpu
 
