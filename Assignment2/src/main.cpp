@@ -1,4 +1,3 @@
-#include <chrono>
 #include <cstddef>
 #include <fstream>
 #include <iostream>
@@ -28,17 +27,6 @@ bool parse_args(program_args_t &args, int argc, char **argv);
 bool read_graph(program_args_t &args, adjacency_list_t &graph);
 std::vector<final_path_t> compute_paths(std::vector<path_segment_t> &path_segments);
 
-using Time = std::chrono::steady_clock;
-using double_sec = std::chrono::duration<double>;
-
-auto time_start() {
-    return Time::now();
-}
-
-double time_end(std::chrono::time_point<Time> start) {
-    return (std::chrono::duration_cast<std::chrono::milliseconds>((Time::now() - start)).count()) / 1000.0;
-}
-
 int main(int argc, char **argv) {
   program_args_t args;
   adjacency_list_t graph;
@@ -50,32 +38,31 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  auto start = time_start();
-  auto paths = delta_step(graph, args.src_vertices);
-  auto duration = time_end(start);
+  timer t;
+  auto paths = delta_step(graph, args.src_vertices, t);
 
-  std::cout << "Time taken: " << duration << std::endl;
+  std::cout << "Time taken: " << t.elapsed() << std::endl;
 
   for (size_t i = 0; i < args.src_vertices.size(); i += 1) {
     node_t vertex = args.src_vertices[i];
     auto path_segments = paths[vertex];
-    auto final_paths = compute_paths(path_segments);
+    // auto final_paths = compute_paths(path_segments);
 
     std::ofstream outfile(args.out_files[i], std::ios::out);
-    for (auto path : final_paths) {
+    for (auto path : path_segments) {
       // Total cost
       // outfile.write((char *) &path.total_cost, sizeof(path.total_cost));
       outfile << path.total_cost;
       // Num nodes
-      size_t num_nodes = path.path.size();
+      size_t num_nodes = 1;// path.path.size();
       // outfile.write((char *) &num_nodes, sizeof(num_nodes));
       outfile << " " << num_nodes;
       // Nodes
-      for (auto node : path.path) {
-        node_t out_node = node + 1;
-        // outfile.write((char *) &out_node, sizeof(out_node));
-        outfile << " " << out_node;
-      }
+      // for (auto node : { path.parent }) {
+      //   node_t out_node = node + 1;
+      //   // outfile.write((char *) &out_node, sizeof(out_node));
+      //   outfile << " " << out_node;
+      // }
       outfile << std::endl;
     }
 

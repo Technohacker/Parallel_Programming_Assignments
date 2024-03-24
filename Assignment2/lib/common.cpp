@@ -12,11 +12,6 @@ bool operator==(node_with_cost_t a, node_with_cost_t b) {
     return a.total_cost == b.total_cost;
 }
 
-// Computes the bucket number for a given total cost
-inline int bucket_num(int total_cost, int delta) {
-    return std::max(total_cost - 1, 0) / delta;
-}
-
 int next_bucket_num(weight_queue_t &queue, int delta) {
   if (queue.empty()) {
     return -1;
@@ -48,4 +43,16 @@ get_bucket_for_number(weight_queue_t &queue, std::function<weight_t (node_t&)> g
   }
 
   return bucket;
+}
+
+void timer::start() {
+  m_begin = Time::now();
+}
+
+void timer::end() {
+  m_end = Time::now();
+}
+
+double timer::elapsed() {
+  return (std::chrono::duration_cast<std::chrono::milliseconds>((Time::now() - m_begin)).count()) / 1000.0;
 }

@@ -6,13 +6,15 @@ std::vector<path_segment_t> delta_step_single(adjacency_list_t &graph,
                                               int source);
 
 std::unordered_map<node_t, std::vector<path_segment_t>>
-delta_step(adjacency_list_t &graph, std::vector<node_t> sources) {
+delta_step(adjacency_list_t &graph, std::vector<node_t> sources, timer &t) {
   std::unordered_map<node_t, std::vector<path_segment_t>> paths;
 
   // No extra preparation needed for CPU
+  t.start();
   for (node_t src : sources) {
     paths[src] = delta_step_single(graph, src);
   }
+  t.end();
 
   return paths;
 }

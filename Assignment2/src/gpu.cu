@@ -9,20 +9,141 @@
 
 #include "gpu.cuh"
 
-// Host-side logic for a single source
-std::vector<path_segment_t>
-delta_step_single(adjacency_list_t &host_graph,
-                  gpu_adjacency_list_t &device_graph, node_t source);
-// GPU kernel for neighbour relaxation
-__global__ void relax_nodes(gpu_adjacency_list_t graph,
-                            unified_buffer_t<node_with_cost_t> bucket,
-                            unified_buffer_t<path_segment_t> paths,
-                            unified_buffer_t<size_t> device_return_starts,
-                            unified_buffer_t<node_with_cost_t> device_return
-);
+// Computes the bucket number for a given total cost
+__device__ inline int bucket_num_cuda(int total_cost, int delta) {
+  return max(total_cost - 1, 0) / delta;
+}
+
+__global__ void initialize_buffers(gpu_adjacency_list_t d_graph,
+                                   device_buffer_t<node_t> d_sources,
+                                   device_buffer_t<int> d_settled,
+                                   device_buffer_t<weight_t> d_total_costs,
+                                   device_buffer_t<node_t> d_parents) {
+  size_t self_node = blockIdx.x * blockDim.x + threadIdx.x;
+  size_t self_source_index = blockIdx.y * blockDim.y + threadIdx.y;
+
+  const size_t N_NODES = d_graph.num_nodes();
+  const size_t N_SOURCES = d_sources.size();
+
+  if (self_node >= N_NODES || self_source_index >= N_SOURCES) {
+    return;
+  }
+
+  size_t source_node = d_sources[self_source_index];
+  size_t source_offset = self_source_index * N_NODES;
+
+  // All nodes start not settled
+  d_settled[source_offset + self_node] = false;
+
+  if (self_node == source_node) {
+    d_total_costs[source_offset + self_node] = 0;
+    d_parents[source_offset + self_node] = source_node;
+  } else {
+    d_total_costs[source_offset + self_node] = INFINITE_DIST;
+    d_parents[source_offset + self_node] = INVALID_NODE;
+  }
+}
+
+__global__ void find_min_buckets(gpu_adjacency_list_t d_graph,
+                                 device_buffer_t<node_t> d_sources,
+                                 device_buffer_t<int> d_settled,
+                                 device_buffer_t<int> d_min_buckets,
+                                 device_buffer_t<weight_t> d_total_costs) {
+  size_t self_node = blockIdx.x * blockDim.x + threadIdx.x;
+  size_t self_source_index = blockIdx.y * blockDim.y + threadIdx.y;
+
+  const size_t N_NODES = d_graph.num_nodes();
+  const size_t N_SOURCES = d_sources.size();
+
+  if (self_node >= N_NODES || self_source_index >= N_SOURCES) {
+    return;
+  }
+
+  size_t source_node = d_sources[self_source_index];
+  size_t source_offset = self_source_index * N_NODES;
+
+  // Settled nodes do not count towards min bucket
+  if (d_settled[source_offset + self_node]) {
+    return;
+  }
+
+  // Do an atomic min with this node's bucket number
+  int self_bucket_num =
+      bucket_num_cuda(d_total_costs[source_offset + self_node], DELTA);
+
+  // Skip the atomic min if it's definitely larger
+  if (d_min_buckets[self_source_index] < self_bucket_num) {
+    return;
+  }
+  atomicMin(&d_min_buckets[self_source_index], self_bucket_num);
+}
+
+__global__ void phase_logic(gpu_adjacency_list_t d_graph,
+                            device_buffer_t<node_t> d_sources,
+                            device_buffer_t<int> d_settled,
+                            device_buffer_t<int> d_min_buckets,
+                            device_buffer_t<weight_t> d_total_costs,
+                            device_buffer_t<node_t> d_parents) {
+  size_t self_node = blockIdx.x * blockDim.x + threadIdx.x;
+  size_t self_source_index = blockIdx.y * blockDim.y + threadIdx.y;
+
+  const size_t N_NODES = d_graph.num_nodes();
+  const size_t N_SOURCES = d_sources.size();
+
+  if (self_node >= N_NODES || self_source_index >= N_SOURCES) {
+    return;
+  }
+
+  // Skip this node if it has been deemed settled
+  size_t source_offset = self_source_index * N_NODES;
+  if (d_settled[source_offset + self_node]) {
+    return;
+  }
+
+  // Compute all bucketing parameters
+  int current_min_bucket = d_min_buckets[self_source_index];
+  int self_bucket_num =
+      bucket_num_cuda(d_total_costs[source_offset + self_node], DELTA);
+
+  // Skip this node if it's not in the current bucket
+  if (self_bucket_num != current_min_bucket) {
+    return;
+  }
+
+  // Mark this node settled to begin with
+  d_settled[source_offset + self_node] = true;
+
+  // Get the total distance to this node
+  weight_t self_total_cost = d_total_costs[source_offset + self_node];
+
+  // Find this node's neighbours
+  node_t *neighbours;
+  weight_t *out_weights;
+  int num_neighbours =
+      d_graph.get_neighbours(self_node, &neighbours, &out_weights);
+
+  for (size_t i = 0; i < num_neighbours; i += 1) {
+    node_t neighbour = neighbours[i];
+    weight_t new_cost = self_total_cost + out_weights[i];
+
+    // Do an atomic min update on this neighbour's distance
+    atomicMin(&d_total_costs[source_offset + neighbour], new_cost);
+
+    // If our write was successful, update the parent and mark it not-settled
+    if (d_total_costs[source_offset + neighbour] == new_cost) {
+      d_settled[source_offset + neighbour] = false;
+
+      // Update the parent only if the current parent has a larger total cost than us
+      node_t current_parent = d_parents[source_offset + neighbour];
+      if (current_parent == INVALID_NODE || d_total_costs[source_offset + current_parent] > self_total_cost) {
+        d_parents[source_offset + neighbour] = self_node;
+      }
+    }
+  }
+}
 
 std::unordered_map<node_t, std::vector<path_segment_t>>
-delta_step(adjacency_list_t &graph, std::vector<node_t> sources) {
+delta_step(adjacency_list_t &graph, std::vector<node_t> sources, timer &t) {
   // Check if there are indeed any CUDA devices
   int device_count;
   CUDA_CHECK(cudaGetDeviceCount(&device_count));
@@ -32,161 +153,95 @@ delta_step(adjacency_list_t &graph, std::vector<node_t> sources) {
   }
 
   // Prepare a GPU version of the input graph
-  gpu_adjacency_list_t device_graph(graph);
+  gpu_adjacency_list_t d_graph(graph);
 
-  std::unordered_map<node_t, std::vector<path_segment_t>> paths;
-  for (node_t src : sources) {
-    paths[src] = delta_step_single(graph, device_graph, src);
-  }
+  size_t num_nodes = graph.size();
+  size_t num_nodes_across_sources = sources.size() * num_nodes;
 
-  device_graph.release();
-  return paths;
-}
+  // Prepare all the buffers needed
+  // All the sources to process for
+  host_buffer_t<node_t> h_sources(sources);
+  device_buffer_t<node_t> d_sources(h_sources.size());
 
-template <typename T>
-__global__ void set_all_but(unified_buffer_t<T> buf, T val, size_t except,
-                            T replacement) {
-  size_t index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (index >= buf.size()) {
-    return;
-  }
+  h_sources.copy_to_device(d_sources);
 
-  buf[index] = (index == except) ? replacement : val;
-}
+  // Total costs and parents for every graph node, per source
+  host_buffer_t<weight_t> h_total_costs(num_nodes_across_sources);
+  device_buffer_t<weight_t> d_total_costs(num_nodes_across_sources);
+  host_buffer_t<node_t> h_parents(num_nodes_across_sources);
+  device_buffer_t<node_t> d_parents(num_nodes_across_sources);
 
-std::vector<path_segment_t>
-delta_step_single(adjacency_list_t &host_graph,
-                  gpu_adjacency_list_t &device_graph, node_t source) {
-  size_t N = host_graph.size();
+  // Whether each node has been settled
+  device_buffer_t<int> d_settled(num_nodes_across_sources);
 
-  // Start with all nodes at infinite distance
-  unified_buffer_t<path_segment_t> paths(N);
-  const size_t block_size = 256;
-  size_t grid_size = (N / block_size) + 1;
+  // Current and next minimum bucket numbers for each source
+  host_buffer_t<int> h_min_buckets(std::vector<int>(h_sources.size(), 0));
+  host_buffer_t<int> B_INFS(std::vector<int>(h_sources.size(), B_INF));
+  device_buffer_t<int> d_min_buckets(h_sources.size());
 
-  set_all_but<<<grid_size, block_size>>>(paths,
-                        {.total_cost = INFINITE_DIST, .parent = INVALID_NODE},
-                        source, {.total_cost = 0, .parent = source});
+  // Start measuring time
+  size_t grid_size_per_source = grid_size(num_nodes);
+  dim3 grid_shape(grid_size_per_source, sources.size());
+  dim3 block_shape(BLOCK_SIZE, 1);
+
+  t.start();
+  // Initialize all bucket numbers
+  initialize_buffers<<<grid_shape, block_shape>>>(d_graph, d_sources, d_settled,
+                                                  d_total_costs, d_parents);
   CUDA_CHECK(cudaDeviceSynchronize());
-  auto get_distance = [&paths](auto node) { return paths[node].total_cost; };
 
-  // Maintain a priority queue for dynamic bucketing
-  weight_queue_t queue;
-
-  // Process the source
-  queue.push({
-      .node = source,
-      .total_cost = 0,
-  });
-
+  h_min_buckets.copy_to_device(d_min_buckets);
   while (true) {
-    // Repeat until we can't find any more buckets
-    int current_bucket_num = next_bucket_num(queue, DELTA);
-    if (current_bucket_num == -1) {
+    // Run a phase
+    phase_logic<<<grid_shape, block_shape>>>(
+        d_graph, d_sources, d_settled, d_min_buckets, d_total_costs, d_parents);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    B_INFS.copy_to_device(d_min_buckets);
+
+    // Find the next minimum buckets
+    find_min_buckets<<<grid_shape, block_shape>>>(d_graph, d_sources, d_settled,
+                                                  d_min_buckets, d_total_costs);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    h_min_buckets.copy_from_device(d_min_buckets);
+
+    bool all_done = true;
+    // std::cout << "New buckets: ";
+    for (size_t i = 0; i < h_min_buckets.size(); i += 1) {
+      // std::cout << h_min_buckets[i] << " ";
+
+      if (h_min_buckets[i] < B_INF) {
+        all_done = false;
+      }
+    }
+    // std::cout << std::endl;
+    if (all_done) {
       break;
     }
+  }
 
-    // Repeat until we can't get a bucket for this number
-    while (true) {
-      std::vector<node_with_cost_t> bucket =
-          get_bucket_for_number(queue, get_distance, current_bucket_num, DELTA);
-      if (bucket.empty()) {
-        break;
-      }
+  t.end();
 
-      // Allocate memory for the device-visible bucket
-      unified_buffer_t<node_with_cost_t> device_bucket(bucket);
+  h_total_costs.copy_from_device(d_total_costs);
+  h_parents.copy_from_device(d_parents);
 
-      // Prepare the return buffer
-      unified_buffer_t<size_t> device_return_starts(bucket.size() + 1);
-
-      device_return_starts[0] = 0;
-      for (size_t i = 0; i < bucket.size(); i += 1) {
-        device_return_starts[i + 1] = device_return_starts[i] + host_graph[bucket[i].node].size(); 
-      }
-
-      size_t num_neighbours = device_return_starts[bucket.size()];
-      unified_buffer_t<node_with_cost_t> device_return(num_neighbours);
-
-      // Relax all outgoing edges for each node in this bucket
-      size_t grid_size = (bucket.size() / block_size) + 1;
-      relax_nodes<<<grid_size, block_size>>>(
-        device_graph,
-        device_bucket,
-        paths,
-        device_return_starts,
-        device_return
-      );
-      CUDA_CHECK(cudaDeviceSynchronize());
-
-      // Read the return buffer to insert into the queue
-      for (size_t i = 0; i < bucket.size(); i += 1) {
-        for (size_t j = device_return_starts[i]; j < device_return_starts[i + 1]; j += 1) {
-          auto elem = device_return[j];
-          if (elem.node == INVALID_NODE) {
-            continue;
-          }
-
-          if (elem.total_cost < paths[elem.node].total_cost) {
-            // Update our paths list
-            paths[elem.node] = {
-                .total_cost = elem.total_cost,
-                .parent = bucket[i].node,
-            };
-
-            // And queue it for bucketing
-            queue.push(elem);
-          }
-
-        }
-      }
-
-      device_bucket.release();
-      device_return_starts.release();
-      device_return.release();
+  std::unordered_map<node_t, std::vector<path_segment_t>> paths;
+  for (size_t i = 0; i < sources.size(); i += 1) {
+    for (node_t n = 0; n < num_nodes; n += 1) {
+      paths[sources[i]].push_back({
+          .total_cost = h_total_costs[i * num_nodes + n],
+          .parent = h_parents[i * num_nodes + n],
+      });
     }
   }
 
-  auto cpu_paths = paths.to_vector();
-  paths.release();
+  h_sources.release();
+  d_graph.release();
+  d_graph.release();
+  d_sources.release();
+  d_total_costs.release();
+  d_parents.release();
 
-  return cpu_paths;
-}
-
-__global__ void relax_nodes(gpu_adjacency_list_t graph,
-                            unified_buffer_t<node_with_cost_t> bucket,
-                            unified_buffer_t<path_segment_t> paths,
-                            unified_buffer_t<size_t> device_return_starts,
-                            unified_buffer_t<node_with_cost_t> device_return
-) {
-  size_t source_index = blockIdx.x * blockDim.x + threadIdx.x;
-  if (source_index >= bucket.size()) {
-    return;
-  }
-
-  node_with_cost_t source = bucket[source_index];
-
-  node_t *neighbours;
-  weight_t *out_weights;
-  int num_neighbours = graph.get_neighbours(source.node, &neighbours, &out_weights);
-
-  for (size_t i = 0; i < num_neighbours; i += 1) {
-    node_t neighbour = neighbours[i];
-    int new_cost = source.total_cost + out_weights[i];
-
-    if (new_cost < paths[neighbour].total_cost) {
-      size_t neighbour_pos = device_return_starts[source_index] + i;
-      device_return[neighbour_pos] = {
-        .node = neighbour,
-        .total_cost = new_cost,
-      };
-
-      // Distance update is done by the CPU
-      // Store the update
-      // paths[outgoing.dest] = {
-      //     .total_cost = new_cost,
-      //     .parent = source.node,
-      // };
-    }
-  }
+  return paths;
 }
