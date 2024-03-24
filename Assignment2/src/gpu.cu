@@ -16,7 +16,7 @@ __device__ inline int bucket_num_cuda(int total_cost, int delta) {
 
 __global__ void initialize_buffers(gpu_adjacency_list_t d_graph,
                                    device_buffer_t<node_t> d_sources,
-                                   device_buffer_t<int> d_settled,
+                                   device_buffer_t<bool> d_settled,
                                    device_buffer_t<weight_t> d_total_costs,
                                    device_buffer_t<node_t> d_parents) {
   size_t self_node = blockIdx.x * blockDim.x + threadIdx.x;
@@ -46,7 +46,7 @@ __global__ void initialize_buffers(gpu_adjacency_list_t d_graph,
 
 __global__ void find_min_buckets(gpu_adjacency_list_t d_graph,
                                  device_buffer_t<node_t> d_sources,
-                                 device_buffer_t<int> d_settled,
+                                 device_buffer_t<bool> d_settled,
                                  device_buffer_t<int> d_min_buckets,
                                  device_buffer_t<weight_t> d_total_costs) {
   size_t self_node = blockIdx.x * blockDim.x + threadIdx.x;
@@ -80,7 +80,7 @@ __global__ void find_min_buckets(gpu_adjacency_list_t d_graph,
 
 __global__ void phase_logic(gpu_adjacency_list_t d_graph,
                             device_buffer_t<node_t> d_sources,
-                            device_buffer_t<int> d_settled,
+                            device_buffer_t<bool> d_settled,
                             device_buffer_t<int> d_min_buckets,
                             device_buffer_t<weight_t> d_total_costs,
                             device_buffer_t<node_t> d_parents) {
@@ -172,7 +172,7 @@ delta_step(adjacency_list_t &graph, std::vector<node_t> sources, timer &t) {
   device_buffer_t<node_t> d_parents(num_nodes_across_sources);
 
   // Whether each node has been settled
-  device_buffer_t<int> d_settled(num_nodes_across_sources);
+  device_buffer_t<bool> d_settled(num_nodes_across_sources);
 
   // Current and next minimum bucket numbers for each source
   host_buffer_t<int> h_min_buckets(std::vector<int>(h_sources.size(), 0));

@@ -46,24 +46,23 @@ int main(int argc, char **argv) {
   for (size_t i = 0; i < args.src_vertices.size(); i += 1) {
     node_t vertex = args.src_vertices[i];
     auto path_segments = paths[vertex];
-    // auto final_paths = compute_paths(path_segments);
+    auto final_paths = compute_paths(path_segments);
 
-    std::ofstream outfile(args.out_files[i], std::ios::out);
-    for (auto path : path_segments) {
+    std::ofstream outfile(args.out_files[i], std::ios::out | std::ios::binary);
+    for (auto path : final_paths) {
       // Total cost
-      // outfile.write((char *) &path.total_cost, sizeof(path.total_cost));
-      outfile << path.total_cost;
+      outfile.write((char *) &path.total_cost, sizeof(path.total_cost));
       // Num nodes
-      size_t num_nodes = 1;// path.path.size();
-      // outfile.write((char *) &num_nodes, sizeof(num_nodes));
-      outfile << " " << num_nodes;
+      size_t num_nodes = path.path.size();
+      outfile.write((char *) &num_nodes, sizeof(num_nodes));
+      // outfile << " " << num_nodes;
       // Nodes
-      // for (auto node : { path.parent }) {
-      //   node_t out_node = node + 1;
-      //   // outfile.write((char *) &out_node, sizeof(out_node));
-      //   outfile << " " << out_node;
-      // }
-      outfile << std::endl;
+      for (auto node : path.path) {
+        node_t out_node = node + 1;
+        outfile.write((char *) &out_node, sizeof(out_node));
+        // outfile << " " << out_node;
+      }
+      // outfile << std::endl;
     }
 
     outfile.close();
