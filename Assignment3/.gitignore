@@ -1,3 +1,6 @@
 inputgen/inputgen
+sorter/sorter
+
+**/*.o
 
 results
