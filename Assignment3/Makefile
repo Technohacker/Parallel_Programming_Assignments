@@ -2,8 +2,8 @@
 CXX := nvcc
 NVCC := nvcc
 
-CXXFLAGS := -Xcompiler -fopenmp -g
-CUFLAGS := -G
+CXXFLAGS := -Xcompiler -fopenmp
+CUFLAGS :=
 
 all: inputgen/inputgen sorter/sorter
 

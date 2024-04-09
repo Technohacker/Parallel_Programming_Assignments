@@ -89,6 +89,7 @@ __global__ void merge_pair_sequential(device_buffer_t<element_t> data, size_t el
 // Recursively merges the blocks of data until there is only one block left
 // Uses the merge_range_parallel and merge_pair_sequential kernels to merge the blocks
 __host__ void merge_blocks_gpu(device_buffer_t<element_t> &data, size_t num_elements_per_block, size_t block_start, size_t block_end) {
+    std::cout << "Merge Entry: " << block_start << " " << block_end << std::endl;
     size_t num_blocks = (block_end - block_start);
 
     // Exit early if there are no blocks to merge, or if there is only one block left
@@ -109,35 +110,36 @@ __host__ void merge_blocks_gpu(device_buffer_t<element_t> &data, size_t num_elem
     size_t sequential_start = parallel_end;
     size_t sequential_end = block_end;
 
-    // Perform the parallel portion of the merge
-    size_t remaining_parallel_blocks = num_parallel_merge_blocks;
-    size_t block_size = num_elements_per_block;
-    while (remaining_parallel_blocks > 1) {
-        size_t num_parallel_pairs = remaining_parallel_blocks / 2;
-
-        merge_range_parallel<<<num_parallel_pairs, 1>>>(data, block_size, parallel_start);
+    size_t num_remaining_parallel_blocks = num_parallel_merge_blocks;
+    size_t parallel_block_size = num_elements_per_block;
+    while (num_remaining_parallel_blocks > 1) {
+        std::cout << "Merge Parallel: " << num_remaining_parallel_blocks << " " << parallel_block_size << " " << parallel_start << std::endl;
+        // Launch the kernel to merge the parallel range of blocks
+        merge_range_parallel<<<num_remaining_parallel_blocks / 2, 1>>>(data, parallel_block_size, parallel_start);
         // Wait for the kernel to finish
         CUDA_CHECK(cudaDeviceSynchronize());
 
-        // Divide the number of remaining parallel blocks by 2
-        remaining_parallel_blocks /= 2;
-        // And double the block size
-        block_size *= 2;
+        // Halve the number of remaining parallel blocks and double the block size
+        num_remaining_parallel_blocks /= 2;
+        parallel_block_size *= 2;
     }
 
-    // Recursively merge the sequential portion if any
+    // If there are sequential blocks left, recursively merge them
     if (sequential_end - sequential_start > 0) {
+        std::cout << "Merge Sequential: " << sequential_start << " " << sequential_end << std::endl;
         merge_blocks_gpu(data, num_elements_per_block, sequential_start, sequential_end);
 
-        // Then launch the kernel to merge the parallel and sequential portions
-        size_t element_start = sequential_start * num_elements_per_block;
-        size_t element_mid = (sequential_start + 1) * num_elements_per_block;
-        size_t element_end = sequential_end * num_elements_per_block;
-
-        merge_pair_sequential<<<1, 1>>>(data, element_start, element_mid, element_end);
-        // Wait for the kernel to finish
+        // Then merge the parallel and sequential blocks
+        merge_pair_sequential<<<1, 1>>>(
+            data,
+            parallel_start * num_elements_per_block,
+            sequential_start * num_elements_per_block,
+            sequential_end * num_elements_per_block
+        );
         CUDA_CHECK(cudaDeviceSynchronize());
     }
+
+    std::cout << "Merge Exit: " << block_start << " " << block_end << std::endl;
 }
 
 // Runs a CPU-side merge of the sorted blocks of data provided by the GPU
@@ -215,12 +217,16 @@ __host__ void sort_blocks_gpu(std::vector<element_t> &data, size_t num_elements_
         device_data.copy_to_device(data.data() + i * num_elements_per_block, num_elements);
 
         // Launch the kernel to sort the blocks of data
+        std::cout << "GPU Block Sort Start" << std::endl;
         bitonic_sort_blockwise<<<num_blocks, num_elements_per_block, num_elements_per_block * sizeof(element_t)>>>(device_data);
         // Wait for the kernel to finish
         CUDA_CHECK(cudaDeviceSynchronize());
+        std::cout << "GPU Block Sort End" << std::endl;
 
         // Merge the sorted blocks of data
+        std::cout << "GPU Block Merge Start" << std::endl;
         merge_blocks_gpu(device_data, num_elements_per_block, 0, num_blocks);
+        std::cout << "GPU Block Merge End" << std::endl;
 
         // Copy the sorted blocks back to the CPU
         device_data.copy_from_device(data.data() + i * num_elements_per_block, num_elements);

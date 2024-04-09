@@ -63,6 +63,8 @@ int main(int argc, char *argv[]) {
     in_file.read(reinterpret_cast<char*>(data.data()), file_size);
     in_file.close();
 
+    std::cout << "File Read" << std::endl;
+
     // Decide how many blocks to sort on the GPU
     size_t num_total_blocks = file_size / num_bytes_per_block;
     size_t num_gpu_blocks = num_total_blocks * cfg.gpu_fraction;
@@ -79,22 +81,28 @@ int main(int argc, char *argv[]) {
             // Once each block is sorted, the CPU will merge sort the two parts
             #pragma omp task shared(data)
             {
+                std::cout << "CPU Start" << std::endl;
                 sort_blocks_cpu(data, cfg.num_elements_per_block, 0, num_cpu_blocks);
+                std::cout << "CPU End" << std::endl;
             }
 
             #pragma omp task shared(data)
             {
+                std::cout << "GPU Start" << std::endl;
                 sort_blocks_gpu(data, cfg.num_elements_per_block, num_cpu_blocks, num_total_blocks);
+                std::cout << "GPU End" << std::endl;
             }
 
             #pragma omp taskwait
 
             // Then finally merge the CPU and GPU sorted blocks
+            std::cout << "Merge Start" << std::endl;
             std::inplace_merge(
                 data.begin(),
                 data.begin() + num_cpu_blocks * cfg.num_elements_per_block,
                 data.begin() + num_total_blocks * cfg.num_elements_per_block
             );
+            std::cout << "Merge End" << std::endl;
         }
     }
 
