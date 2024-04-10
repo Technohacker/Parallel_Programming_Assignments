@@ -1,5 +1,6 @@
 inputgen/inputgen
 sorter/sorter
+verifier/verifier
 
 **/*.o
 
