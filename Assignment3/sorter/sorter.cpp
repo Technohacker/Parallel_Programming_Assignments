@@ -17,30 +17,26 @@ struct config {
     // The path to the output file
     std::string out_file_path;
 
-    // The number of elements in each block
-    size_t num_elements_per_block;
-    // The fraction of blocks to be sorted on the GPU
-    float gpu_fraction;
+    // Whether to use the GPU or not
+    bool use_gpu;
 };
 
 config get_config(int argc, char *argv[]) {
-    if (argc != 5) {
-        std::cerr << "Usage: " << argv[0] << " <in file path> <out file path> <num bytes per block> <gpu fraction>" << std::endl;
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0] << " <in file path> <out file path> <use gpu>" << std::endl;
         exit(1);
     }
 
     config cfg;
     cfg.in_file_path = argv[1];
     cfg.out_file_path = argv[2];
-    cfg.num_elements_per_block = std::stoul(argv[3]) / ELEMENT_SIZE;
-    cfg.gpu_fraction = std::stof(argv[4]);
+    cfg.use_gpu = std::stoi(argv[3]);
 
     return cfg;
 }
 
 int main(int argc, char *argv[]) {
     config cfg = get_config(argc, argv);
-    size_t num_bytes_per_block = cfg.num_elements_per_block * ELEMENT_SIZE;
 
     // Open the input file
     std::ifstream in_file(cfg.in_file_path, std::ios::binary);
@@ -52,10 +48,6 @@ int main(int argc, char *argv[]) {
     // Ensure that the file is divisible into blocks
     in_file.seekg(0, std::ios::end);
     size_t file_size = in_file.tellg();
-    if (file_size % num_bytes_per_block != 0) {
-        std::cerr << "Error: File size is not divisible by the block size" << std::endl;
-        exit(1);
-    }
 
     // Read the file into memory
     in_file.seekg(0, std::ios::beg);
@@ -65,10 +57,26 @@ int main(int argc, char *argv[]) {
 
     std::cout << "File Read" << std::endl;
 
-    // Decide how many blocks to sort on the GPU
-    size_t num_total_blocks = file_size / num_bytes_per_block;
-    size_t num_gpu_blocks = num_total_blocks * cfg.gpu_fraction;
-    size_t num_cpu_blocks = num_total_blocks - num_gpu_blocks;
+    size_t num_elements = file_size / ELEMENT_SIZE;
+
+    size_t cpu_range_start = 0;
+    size_t cpu_range_end = num_elements;
+    size_t gpu_range_start = 0;
+    size_t gpu_range_end = 0;
+
+    // Check if the GPU should be used
+    if (cfg.use_gpu) {
+        // Calculate the number of elements to be sorted on the GPU
+        size_t num_gpu_elements = num_elements * GPU_FRACTION;
+
+        // Round the number of elements to be sorted on the GPU to the smallest multiple of the GPU block size
+        size_t num_gpu_blocks = num_gpu_elements / GPU_BLOCK_SIZE;
+        num_gpu_elements = num_gpu_blocks * GPU_BLOCK_SIZE;
+
+        // Adjust the ranges for the CPU and GPU, giving the GPU the first portion of the data
+        cpu_range_start = num_gpu_elements;
+        gpu_range_end = num_gpu_elements;
+    }
 
     // Start the timer
     timer t;
@@ -82,14 +90,14 @@ int main(int argc, char *argv[]) {
             #pragma omp task shared(data)
             {
                 std::cout << "CPU Start" << std::endl;
-                sort_blocks_cpu(data, cfg.num_elements_per_block, 0, num_cpu_blocks);
+                sort_range_cpu(data, cpu_range_start, cpu_range_end);
                 std::cout << "CPU End" << std::endl;
             }
 
             #pragma omp task shared(data)
             {
                 std::cout << "GPU Start" << std::endl;
-                sort_blocks_gpu(data, cfg.num_elements_per_block, num_cpu_blocks, num_total_blocks);
+                sort_range_gpu(data, gpu_range_start, gpu_range_end);
                 std::cout << "GPU End" << std::endl;
             }
         }
@@ -97,7 +105,7 @@ int main(int argc, char *argv[]) {
 
     // Then finally merge the CPU and GPU sorted arrays
     std::cout << "Merge Start" << std::endl;
-    std::inplace_merge(data.begin(), data.begin() + num_cpu_blocks * cfg.num_elements_per_block, data.end());
+    // std::inplace_merge(data.begin() + cpu_range_start, data.begin() + gpu_range_end, data.end());
     std::cout << "Merge End" << std::endl;
 
     // End the timer

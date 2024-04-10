@@ -1,41 +1,25 @@
 #include <algorithm>
 #include <cstddef>
+#include <vector>
 
 #include "cpu.h"
 
-void sort_blocks_cpu(std::vector<element_t> &data, size_t num_elements_per_block, size_t block_start, size_t block_end) {
-    // First, sort each block individually
-    #pragma omp taskloop shared(data)
-    for (size_t i = block_start; i < block_end; i += 1) {
-        std::sort(data.begin() + i * num_elements_per_block, data.begin() + (i + 1) * num_elements_per_block);
-    }
-    #pragma omp taskwait
-
-    // Then, merge the blocks
-    merge_sort_blocks_cpu(data, num_elements_per_block, block_start, block_end);
-}
-
-// Merge sorts a list of blocks on the CPU using OpenMP tasks
-void merge_sort_blocks_cpu(std::vector<element_t> &data, size_t num_elements_per_block, size_t block_start, size_t block_end) {
-    // If we have only one block, we are done
-    if (block_end - block_start <= 1) {
+// Performs a recursive merge sort on the given range of the data using OpenMP tasks
+void sort_range_cpu(std::vector<int> &data, size_t range_start, size_t range_end) {
+    // Base case: if the range is below block size, sort it using std::sort
+    if (range_end - range_start <= CPU_BLOCK_SIZE) {
+        std::sort(data.begin() + range_start, data.begin() + range_end);
         return;
     }
 
-    // Calculate the midpoint
-    size_t block_mid = block_start + (block_end - block_start) / 2;
-
-    // Recursively sort the two halves
+    // Recursively sort the two halves of the range
+    size_t range_mid = (range_start + range_end) / 2;
     #pragma omp task shared(data)
-    merge_sort_blocks_cpu(data, num_elements_per_block, block_start, block_mid);
-
+    sort_range_cpu(data, range_start, range_mid);
     #pragma omp task shared(data)
-    merge_sort_blocks_cpu(data, num_elements_per_block, block_mid, block_end);
-
+    sort_range_cpu(data, range_mid, range_end);
     #pragma omp taskwait
 
-    // Merge the two halves
-    std::inplace_merge(data.begin() + block_start * num_elements_per_block,
-                       data.begin() + block_mid * num_elements_per_block,
-                       data.begin() + block_end * num_elements_per_block);
+    // Merge the two sorted halves
+    std::inplace_merge(data.begin() + range_start, data.begin() + range_mid, data.begin() + range_end);
 }

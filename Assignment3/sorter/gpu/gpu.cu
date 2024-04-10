@@ -1,8 +1,8 @@
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <vector>
 
-#include "../../common.h"
 #include "device_buffer.h"
 #include "gpu.h"
 
@@ -15,172 +15,121 @@ __host__ __device__ size_t largest_power_of_two(size_t n) {
     return power;
 }
 
-// Performs a bitonic sort on the individual blocks of data independently
-// Each thread block is responsible for sorting a single block of data,
-// and as many thread blocks are launched as there are blocks of data
-__global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data) {
-    size_t block_start = blockIdx.x * blockDim.x;
+// Performs a bitonic sort on consecutive blocks of elements
+// Each block of elements is sorted by a single thread block
+// The direction of the sort for a block is determined by the direction bit of the block index
+__global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t block_direction_bit_pos) {
+    assert(blockDim.x == GPU_BLOCK_SIZE / 2);
 
-    element_t *block_data = &data[block_start];
+    // Find the start index of the block
+    const size_t block_start = blockIdx.x * blockDim.x;
+    // And the ID of this thread within the block
+    const size_t worker_id = threadIdx.x;
 
-    // Load the block of data into shared memory
-    extern __shared__ element_t shared_data[];
-    shared_data[threadIdx.x] = block_data[threadIdx.x];
+    // Calculate the direction for this block
+    // The masked bit of the thread block index determines the direction of the sort
+    bool block_ascending = (blockIdx.x & (1 << block_direction_bit_pos)) == 0;
 
+    // Load the block of elements into shared memory
+    __shared__ element_t shared_data[GPU_BLOCK_SIZE / 2];
+    shared_data[worker_id] = data[block_start + worker_id];
     __syncthreads();
 
-    // Perform the bitonic sort on the block of data
-    for (size_t size = 2; size <= blockDim.x; size *= 2) {
-        for (size_t stride = size / 2; stride > 0; stride /= 2) {
-            for (size_t i = 0; i < blockDim.x; i++) {
-                size_t j = i ^ stride;
+    // Run an outer loop to sort a range of elements at a time
+    // For each iteration, sort_range number of elements are sorted
+    for (size_t sort_range = 2; sort_range <= GPU_BLOCK_SIZE / 2; sort_range *= 2) {
+        // Find the sort group we are working on
+        const size_t sort_group_num = worker_id / sort_range;
+        // And the ID of this thread within the sort group
+        size_t sort_group_id = worker_id % sort_range;
 
-                if (j > i) {
-                    if ((i & size) == 0 && shared_data[i] > shared_data[j]) {
-                        element_t temp = shared_data[i];
-                        shared_data[i] = shared_data[j];
-                        shared_data[j] = temp;
-                    }
-                    if ((i & size) != 0 && shared_data[i] < shared_data[j]) {
-                        element_t temp = shared_data[i];
-                        shared_data[i] = shared_data[j];
-                        shared_data[j] = temp;
-                    }
+        // Every other group of elements is sorted in the opposite direction
+        const bool ascending = sort_group_num % 2 == 0 ? block_ascending : !block_ascending;
+
+        // Run an inner loop to compare and swap elements
+        for (size_t compare_range = sort_range; compare_range > 1; compare_range /= 2) {
+            // Find the comparison group we are working on
+            const size_t compare_group_num = sort_group_id / compare_range;
+            // And the ID of this thread within the comparison group
+            const size_t compare_group_id = sort_group_id % compare_range;
+
+            // Calculate the index of the element this thread is assigned to
+            const size_t element_id = sort_group_num * sort_range + compare_group_num * compare_range + compare_group_id;
+            // And the index of the element to compare with using bitwise XOR
+            const size_t compare_id = element_id ^ (compare_range / 2);
+
+            // Make sure the compare_id is not behind the element_id
+            if (element_id < compare_id) {
+                // Load the elements to compare
+                const element_t element = shared_data[element_id];
+                const element_t compare = shared_data[compare_id];
+
+                // Compare and swap the elements if necessary
+                if ((element > compare) == ascending) {
+                    shared_data[element_id] = compare;
+                    shared_data[compare_id] = element;
                 }
             }
 
             __syncthreads();
         }
-    }
 
-    // Store the sorted block of data back to global memory
-    block_data[threadIdx.x] = shared_data[threadIdx.x];
-}
-
-// Merges two sorted arrays into a single sorted array
-__device__ void merge_arrays(device_buffer_t<element_t> &data, device_buffer_t<element_t> &merge_data, size_t start, size_t mid, size_t end) {
-    size_t i = start;
-    size_t j = mid;
-    size_t k = start;
-
-    while (i < mid && j < end) {
-        if (data[i] < data[j]) {
-            merge_data[k++] = data[i++];
-        } else {
-            merge_data[k++] = data[j++];
-        }
-    }
-
-    while (i < mid) {
-        merge_data[k++] = data[i++];
-    }
-
-    while (j < end) {
-        merge_data[k++] = data[j++];
-    }
-
-    memcpy(&data[start], &merge_data[start], (end - start) * sizeof(element_t));
-}
-
-// Merges a range of consecutive pairs of evenly sized blocks of data
-// The number of blocks must be a power of two
-// A thread block is launched to merge each pair of blocks
-// The number of thread blocks is half the number of blocks
-__global__ void merge_evenly_sized_blocks(device_buffer_t<element_t> data, device_buffer_t<element_t> merge_data, size_t num_elements_per_block, size_t range_start) {
-    // Find the pair this thread block is responsible for
-    size_t block_index = range_start + blockIdx.x * 2;
-
-    // Find the starting and ending indices of the pair of blocks
-    size_t pair_start = block_index * num_elements_per_block;
-    size_t pair_mid = pair_start + num_elements_per_block;
-    size_t pair_end = pair_mid + num_elements_per_block;
-
-    // Merge the pair of blocks
-    merge_arrays(data, merge_data, pair_start, pair_mid, pair_end);
-}
-
-// Recursively uses kernel launches to merge the blocks of data
-__global__ void merge_blocks(device_buffer_t<element_t> data, device_buffer_t<element_t> merge_data, size_t num_elements_per_block, size_t block_start, size_t block_end) {
-    size_t num_blocks = block_end - block_start;
-
-    // If there is less than two blocks, there is nothing to merge
-    if (num_blocks <= 1) {
-        return;
-    }
-
-    // Find the largest power of two that fits the number of blocks
-    // These can be merged in parallel
-    size_t parallel_blocks = largest_power_of_two(num_blocks);
-    // Check how many blocks are left over that are not a power of two
-    size_t sequential_blocks = num_blocks - parallel_blocks;
-
-    // Launch a kernel to merge the pairs of blocks in a tree-like fashion
-    size_t num_remaining_pairs = parallel_blocks / 2;
-    size_t merge_size = num_elements_per_block;
-    while (num_remaining_pairs >= 1) {
-        merge_evenly_sized_blocks<<<num_remaining_pairs, 1>>>(data, merge_data, merge_size, block_start);
-        CUDA_CHECK_DEV(cudaPeekAtLastError());
-        CUDA_CHECK_DEV(cudaDeviceSynchronize());
-
-        num_remaining_pairs /= 2;
-        merge_size *= 2;
-    }
-
-    // For the non-power of two blocks, recursively merge them
-    if (sequential_blocks > 0) {
-        size_t sequential_block_start = block_start + parallel_blocks;
-        size_t sequential_block_end = sequential_block_start + sequential_blocks;
-
-        merge_blocks<<<1, 1>>>(data, merge_data, num_elements_per_block, sequential_block_start, sequential_block_end);
-        CUDA_CHECK_DEV(cudaPeekAtLastError());
-        CUDA_CHECK_DEV(cudaDeviceSynchronize());
-        
-        // Wait for the kernel to finish
         __syncthreads();
-
-        // Merge the two halves of the data
-        merge_arrays(data, merge_data, block_start * num_elements_per_block, sequential_block_start * num_elements_per_block, block_end * num_elements_per_block);
     }
 
-    merge_arrays(
-        data,
-        merge_data,
-        block_start * num_elements_per_block,
-        (block_start + parallel_blocks) * num_elements_per_block,
-        block_end * num_elements_per_block
-    );
+    // Store the sorted block of elements back into global memory
+    data[block_start + worker_id] = shared_data[worker_id];
 }
 
-// Merges the sorted blocks of data on the CPU
-void do_final_merge(std::vector<element_t> &data, std::vector<size_t> &sorted_block_starts, size_t num_elements_per_block, size_t start, size_t end) {
-    // If there is only one block, there is nothing to merge
+// __host__ void bitonic_sort_driver(device_buffer_t<element_t> &data, size_t range_start, size_t num_blocks) {
+//     // If there is only one block of elements, launch the kernel to sort the block
+//     if (num_blocks == 1) {
+//         bitonic_sort_kernel<<<1, GPU_BLOCK_SIZE>>>(data, range_start, 0);
+//         return;
+//     }
+
+//     // For larger numbers of blocks, start with a stride of 2 and go up to the number of blocks
+//     for (size_t stride = 2; stride <= num_blocks; stride *= 2) {
+//         // At each stride, perform a bitonic sort on the blocks of elements
+//         bitonic_sort_kernel<<<num_blocks, GPU_BLOCK_SIZE>>>(data, range_start, stride - 1);
+
+//         // Wait for the kernel to finish
+//         CUDA_CHECK(cudaPeekAtLastError());
+//         CUDA_CHECK(cudaDeviceSynchronize());
+
+//         // Then launch a kernel to merge the blocks of elements
+//         bitonic_merge_kernel<<<num_blocks, GPU_BLOCK_SIZE>>>(data, range_start, stride);
+
+//     }
+// }
+
+// Merges the sorted blocks of data on the CPU recursively using OpenMP tasks
+void do_final_merge(std::vector<element_t> &data, std::vector<size_t> &sorted_block_starts, size_t start, size_t end) {
+    // If there is only one block of data, there is nothing to merge
     if (end - start <= 1) {
         return;
     }
 
-    // Split the blocks into two halves
-    size_t mid = start + (end - start) / 2;
+    // Otherwise, split the blocks of data in half and merge them recursively
+    size_t mid = (end - start) / 2;
 
-    // Recursively merge the two halves using OpenMP tasks
     #pragma omp task shared(data, sorted_block_starts)
-    do_final_merge(data, sorted_block_starts, num_elements_per_block, start, mid);
+    do_final_merge(data, sorted_block_starts, start, start + mid);
     #pragma omp task shared(data, sorted_block_starts)
-    do_final_merge(data, sorted_block_starts, num_elements_per_block, mid, end);
+    do_final_merge(data, sorted_block_starts, start + mid, end);
     #pragma omp taskwait
 
-    // Merge the two halves of the data
     std::inplace_merge(
-        data.begin() + sorted_block_starts[start] * num_elements_per_block,
-        data.begin() + sorted_block_starts[mid] * num_elements_per_block,
-        data.begin() + sorted_block_starts[end] * num_elements_per_block
-    );
+        data.begin() + sorted_block_starts[start],
+        data.begin() + sorted_block_starts[start + mid],
+        data.begin() + sorted_block_starts[end]);
 }
 
-__host__ void sort_blocks_gpu(std::vector<element_t> &data, size_t num_elements_per_block, size_t block_start, size_t block_end) {
-    size_t num_blocks = (block_end - block_start);
+__host__ void sort_range_gpu(std::vector<element_t> &data, size_t range_start, size_t range_end) {
+    size_t num_elements_total = range_end - range_start;
 
-    // Exit early if there are no blocks to sort
-    if (num_blocks == 0) {
+    // Exit early if there are no elements to sort
+    if (num_elements_total == 0) {
         return;
     }
 
@@ -192,67 +141,47 @@ __host__ void sort_blocks_gpu(std::vector<element_t> &data, size_t num_elements_
         std::exit(1);
     }
 
-    // Print the compute capability of the first device
-    cudaDeviceProp device_properties;
-    CUDA_CHECK(cudaGetDeviceProperties(&device_properties, 0));
-    std::cout << "CUDA Device: " << device_properties.name << std::endl;
-    std::cout << "Compute Capability: " << device_properties.major << "." << device_properties.minor << std::endl;
-
-    // Find the largest power-of-2 number of blocks that can fit on 40% of the GPU memory
-    // This is to ensure that there is enough memory for the merge step
+    // Find the largest power-of-2 number of elements that can fit on 80% of the GPU memory
     size_t total_gpu_memory;
     CUDA_CHECK(cudaMemGetInfo(nullptr, &total_gpu_memory));
-    size_t safe_gpu_memory = total_gpu_memory * 0.4;
-    size_t max_blocks = largest_power_of_two(safe_gpu_memory / (num_elements_per_block * sizeof(element_t)));
+
+    size_t safe_gpu_memory = total_gpu_memory * 0.8;
+    size_t max_elements = largest_power_of_two(safe_gpu_memory / sizeof(element_t));
 
     // Allocate memory on the GPU for the blocks of data assigned to the GPU
     device_buffer_t<element_t> device_data;
-    // Also allocate memory for temporary storage in merge
-    device_buffer_t<element_t> merge_data;
+    // Also keep track of where the sorted blocks start
+    std::vector<size_t> sorted_block_starts;
 
-    // While there are more blocks of data than can fit on the GPU, sort the blocks in chunks
-    for (size_t i = block_start; i < block_end; i += max_blocks) {
-        size_t num_blocks = std::min(max_blocks, block_end - i);
-        size_t num_elements = num_blocks * num_elements_per_block;
+    size_t buffer_size = std::min(max_elements, num_elements_total);
+    for (size_t i = range_start; i < range_end; i += buffer_size) {
+        // If there are fewer elements than the buffer size, reduce the buffer size to the next power of two
+        if (i + buffer_size > range_end) {
+            buffer_size = largest_power_of_two(range_end - i);
+        }
 
         // Reallocate the device buffer if the number of elements is different
-        // This is likely to happen on the first and last iteration
-        if (device_data.size() != num_elements) {
-            device_data.reallocate(num_elements);
-            merge_data.reallocate(num_elements);
+        if (device_data.size() != buffer_size) {
+            device_data.reallocate(buffer_size);
         }
 
         // Copy the blocks of data to the GPU
-        device_data.copy_to_device(data.data() + i * num_elements_per_block, num_elements);
+        device_data.copy_to_device(&data[i], buffer_size);
 
         // Launch the kernel to sort the blocks of data
         std::cout << "GPU Block Sort Start" << std::endl;
-        bitonic_sort_blockwise<<<num_blocks, num_elements_per_block, num_elements_per_block * sizeof(element_t)>>>(device_data);
+        bitonic_sort_blockwise<<<buffer_size / (GPU_BLOCK_SIZE / 2), GPU_BLOCK_SIZE / 2>>>(device_data, 0);
         // Wait for the kernel to finish
         CUDA_CHECK(cudaPeekAtLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
         std::cout << "GPU Block Sort End" << std::endl;
 
-        // Launch the kernel to merge the blocks of data
-        std::cout << "GPU Block Merge Start" << std::endl;
-        merge_blocks<<<1, 1>>>(device_data, merge_data, num_elements_per_block, 0, num_blocks);
-        // Wait for the kernel to finish
-        CUDA_CHECK(cudaPeekAtLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
-        std::cout << "GPU Block Merge End" << std::endl;
-
-        // Copy the sorted blocks back to the CPU
-        device_data.copy_from_device(data.data() + i * num_elements_per_block, num_elements);
-    }
-
-    // Prepare a vector containing the indices of the sorted blocks
-    std::vector<size_t> sorted_block_starts;
-    for (size_t i = block_start; i < block_end; i += max_blocks) {
+        // Copy the sorted data back to the CPU
+        device_data.copy_from_device(&data[i], buffer_size);
+        // And mark the start of the sorted block
         sorted_block_starts.push_back(i);
     }
-    sorted_block_starts.push_back(block_end);
 
     // Do the final merge on the CPU
-    #pragma omp task shared(data, sorted_block_starts)
-    do_final_merge(data, sorted_block_starts, num_elements_per_block, 0, sorted_block_starts.size() - 1);
+    do_final_merge(data, sorted_block_starts, 0, sorted_block_starts.size());
 }

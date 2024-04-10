@@ -7,6 +7,9 @@
 #include <cstddef>
 #include <cuda_runtime.h>
 
+#include "../../common.h"
+#include "device_buffer.h"
+
 // Macro for checking CUDA Errors
 #define CUDA_CHECK(ans)                                                        \
   { cuda_check((ans), __FILE__, __LINE__); }
@@ -30,7 +33,4 @@ inline void cuda_check(cudaError_t code, const char *file, int line) {
   }                                                         \
 }
 
-#include "../../common.h"
-#include "device_buffer.h"
-
-__host__ void sort_blocks_gpu(std::vector<element_t> &data, size_t num_elements_per_block, size_t block_start, size_t block_end);
+__host__ void sort_range_gpu(std::vector<element_t> &data, size_t range_start, size_t range_end);

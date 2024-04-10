@@ -2,10 +2,10 @@
 CXX := nvcc
 NVCC := nvcc
 
-CXXFLAGS := -Xcompiler -fopenmp
-CUFLAGS :=
+CXXFLAGS := -Xcompiler -fopenmp -g
+CUFLAGS := -rdc=true -g
 
-all: inputgen/inputgen sorter/sorter
+all: inputgen/inputgen sorter/sorter verifier/verifier
 
 inputgen/inputgen:
 
@@ -16,6 +16,8 @@ sorter/cpu/cpu.o: sorter/cpu/cpu.cpp sorter/cpu/cpu.h
 
 sorter/gpu/gpu.o: sorter/gpu/gpu.cu sorter/gpu/gpu.h
 	$(NVCC) $(CUFLAGS) -c $< -o $@
+
+verifier/verifier:
 
 clean:
 	rm -f \
