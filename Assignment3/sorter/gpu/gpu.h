@@ -20,6 +20,16 @@ inline void cuda_check(cudaError_t code, const char *file, int line) {
   }
 }
 
+#define CUDA_CHECK_DEV(call)                                \
+{                                                           \
+  cudaError_t cucheck_err = (call);                         \
+  if(cucheck_err != cudaSuccess) {                          \
+    const char *err_str = cudaGetErrorString(cucheck_err);  \
+    printf("%s (%d): %s\n", __FILE__, __LINE__, err_str);   \
+    assert(0);                                              \
+  }                                                         \
+}
+
 #include "../../common.h"
 #include "device_buffer.h"
 

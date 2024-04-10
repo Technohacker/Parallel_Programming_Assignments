@@ -11,7 +11,7 @@ void sort_blocks_cpu(std::vector<element_t> &data, size_t num_elements_per_block
     }
     #pragma omp taskwait
 
-    // Then merge the blocks
+    // Then, merge the blocks
     merge_sort_blocks_cpu(data, num_elements_per_block, block_start, block_end);
 }
 

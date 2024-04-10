@@ -92,19 +92,13 @@ int main(int argc, char *argv[]) {
                 sort_blocks_gpu(data, cfg.num_elements_per_block, num_cpu_blocks, num_total_blocks);
                 std::cout << "GPU End" << std::endl;
             }
-
-            #pragma omp taskwait
-
-            // Then finally merge the CPU and GPU sorted blocks
-            std::cout << "Merge Start" << std::endl;
-            std::inplace_merge(
-                data.begin(),
-                data.begin() + num_cpu_blocks * cfg.num_elements_per_block,
-                data.begin() + num_total_blocks * cfg.num_elements_per_block
-            );
-            std::cout << "Merge End" << std::endl;
         }
     }
+
+    // Then finally merge the CPU and GPU sorted arrays
+    std::cout << "Merge Start" << std::endl;
+    std::inplace_merge(data.begin(), data.begin() + num_cpu_blocks * cfg.num_elements_per_block, data.end());
+    std::cout << "Merge End" << std::endl;
 
     // End the timer
     t.end();

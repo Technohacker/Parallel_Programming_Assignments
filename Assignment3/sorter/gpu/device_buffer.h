@@ -7,60 +7,37 @@
 
 #include "gpu.h"
 
-template<typename T>
-class allocator {
-public:
-    static void mem_alloc(T** ptr, size_t num_elements);
-    static void mem_free(T* ptr);
-};
-
 // General purpose buffer
-template<typename T, typename A>
-class buffer_t {
-public:
+template<typename T>
+class device_buffer_t {
+protected:
     T *buf = nullptr;
     size_t num_elements = 0;
 
-    buffer_t() {
+public:
+    device_buffer_t() {
         this->reallocate(0);
     }
-    buffer_t(size_t N) {
+    device_buffer_t(size_t N) {
         this->reallocate(N);
     }
 
     void reallocate(size_t N) {
         if (this->buf != nullptr) {
-            A::mem_free(this->buf);
+            CUDA_CHECK(cudaFree(this->buf));
             this->buf = nullptr;
+
             this->num_elements = 0;
         }
 
         if (N > 0) {
-            A::mem_alloc(&this->buf, N * sizeof(T));
+            CUDA_CHECK(cudaMalloc(&this->buf, N * sizeof(T)));
             this->num_elements = N;
         }
     }
     void release() {
         this->reallocate(0);
     }
-};
-
-template<typename T>
-class device_allocator : public allocator<T> {
-public:
-    static void mem_alloc(T** ptr, size_t num_elements) {
-        CUDA_CHECK(cudaMalloc(ptr, num_elements * sizeof(T)));
-    }
-    static void mem_free(T* ptr) {
-        CUDA_CHECK(cudaFree(ptr));
-    }
-};
-
-template<typename T>
-class device_buffer_t : public buffer_t<T, device_allocator<T>> {
-public:
-    device_buffer_t(): buffer_t<T, device_allocator<T>>() {}
-    device_buffer_t(size_t N): buffer_t<T, device_allocator<T>>(N) {}
 
     void copy_to_device(T* host_buf, size_t num_elements) {
         assert(this->num_elements == num_elements);
