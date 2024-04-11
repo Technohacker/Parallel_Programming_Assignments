@@ -16,20 +16,20 @@ struct config {
     // The path to the output file
     std::string out_file_path;
 
-    // Whether to use the GPU or not
-    bool use_gpu;
+    // The fraction of the data to be sorted on the GPU
+    float gpu_fraction;
 };
 
 config get_config(int argc, char *argv[]) {
     if (argc != 4) {
-        std::cerr << "Usage: " << argv[0] << " <in file path> <out file path> <use gpu>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <in file path> <out file path> <gpu fraction>" << std::endl;
         exit(1);
     }
 
     config cfg;
     cfg.in_file_path = argv[1];
     cfg.out_file_path = argv[2];
-    cfg.use_gpu = std::stoi(argv[3]);
+    cfg.gpu_fraction = std::stof(argv[3]);
 
     return cfg;
 }
@@ -66,23 +66,26 @@ int main(int argc, char *argv[]) {
         .end = 0
     };
 
-    // Check if the GPU should be used
-    if (cfg.use_gpu) {
-        // Calculate the number of elements to be sorted on the GPU
-        size_t num_gpu_elements = num_elements * GPU_FRACTION;
+    // Calculate the number of elements to be sorted on the GPU
+    size_t num_gpu_elements = cfg.gpu_fraction * num_elements;
+    std::cout << "GPU Fraction: " << cfg.gpu_fraction << std::endl;
+    std::cout << "GPU Elements: " << num_gpu_elements << std::endl;
 
-        // Round the number of elements to be sorted on the GPU to the smallest multiple of the GPU block size
-        size_t num_gpu_blocks = num_gpu_elements / GPU_BLOCK_SIZE;
-        num_gpu_elements = num_gpu_blocks * GPU_BLOCK_SIZE;
+    // Round the number of elements to be sorted on the GPU to the smallest multiple of the GPU block size
+    size_t num_gpu_blocks = num_gpu_elements / GPU_BLOCK_SIZE;
+    num_gpu_elements = num_gpu_blocks * GPU_BLOCK_SIZE;
 
-        // Adjust the ranges for the CPU and GPU, giving the GPU the first portion of the data
-        cpu_range.start = num_gpu_elements;
-        gpu_range.end = num_gpu_elements;
-    }
+    // Adjust the ranges for the CPU and GPU, giving the GPU the first portion of the data
+    cpu_range.start = num_gpu_elements;
+    gpu_range.end = num_gpu_elements;
 
     // Make the views
     vector_view<element_t> cpu_view(data, cpu_range);
     vector_view<element_t> gpu_view(data, gpu_range);
+
+    std::cout << "Views Created" << std::endl;
+    std::cout << "CPU Size: " << cpu_view.size() << std::endl;
+    std::cout << "GPU Size: " << gpu_view.size() << std::endl;
 
     // Start the timer
     timer t;
@@ -94,26 +97,36 @@ int main(int argc, char *argv[]) {
         {
             // Launch two OpenMP tasks to blockwise sort the data on the CPU and GPU
             // Once each block is sorted, the CPU will merge sort the two parts
-            #pragma omp task shared(data)
+            #pragma omp task
             {
                 std::cout << "CPU Start" << std::endl;
                 sort_cpu(cpu_view);
                 std::cout << "CPU End" << std::endl;
             }
 
-            #pragma omp task shared(data)
+            #pragma omp task
             {
                 std::cout << "GPU Start" << std::endl;
                 sort_gpu(gpu_view);
                 std::cout << "GPU End" << std::endl;
             }
+
+            #pragma omp taskwait
+
+            // Then finally launch a task to merge the two sorted parts
+            #pragma omp task shared(data)
+            {
+                // First allocate a result vector
+                std::vector<element_t> result(data.size());
+
+                std::cout << "Merge Start" << std::endl;
+                merge_pair(cpu_view, gpu_view, result);
+                std::cout << "Merge End" << std::endl;
+
+                data = result;
+            }
         }
     }
-
-    // Then finally merge the CPU and GPU sorted arrays
-    std::cout << "Merge Start" << std::endl;
-    // data = merge_ranges_cpu(data, {cpu_range, gpu_range});
-    std::cout << "Merge End" << std::endl;
 
     // End the timer
     t.end();

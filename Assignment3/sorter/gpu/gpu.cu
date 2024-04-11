@@ -186,7 +186,7 @@ __host__ void sort_gpu(vector_view<element_t> data) {
     std::vector<vector_view<element_t>> sorted_block_views;
 
     // Find the buffer size to use
-    size_t buffer_blocks = std::min(num_blocks_total, max_blocks);
+    size_t buffer_blocks = largest_power_of_two(std::min(num_blocks_total, max_blocks));
     for (size_t i = 0; i < num_blocks_total; i += buffer_blocks) {
         // If we will overshoot the end of the range, reduce the buffer size to the next power of two
         if (i + buffer_blocks > num_blocks_total) {
@@ -218,7 +218,11 @@ __host__ void sort_gpu(vector_view<element_t> data) {
         sorted_block_views.push_back(blocks);
     }
 
-    // TODO: Merge the sorted blocks back together
+    // Merge the sorted blocks back together
+    std::vector<element_t> sorted_data = merge_multiple(sorted_block_views);
+
+    // Copy the sorted data back to the input
+    std::copy(sorted_data.begin(), sorted_data.end(), data.begin());
 
     return;
 }

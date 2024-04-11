@@ -19,6 +19,7 @@ private:
     C &container;
     range_t range;
 public:
+    view(C &container) : container(container), range(range_t { .start = 0, .end = container.size() }) {}
     view(C &container, range_t range) : container(container), range(range) {}
 
     auto &operator[](size_t i) {
@@ -37,6 +38,10 @@ public:
         return container.begin() + range.end;
     }
 
+    bool from_same_container(view<C> &other) {
+        return &container == &other.container;
+    }
+
     view<C> slice(range_t new_range) {
         range_t final_range = {
             .start = range.start + new_range.start,
@@ -53,5 +58,3 @@ const size_t ELEMENT_SIZE = sizeof(element_t);
 
 const size_t CPU_BLOCK_SIZE = 1024;
 const size_t GPU_BLOCK_SIZE = 2048;
-
-const float GPU_FRACTION = 1;
