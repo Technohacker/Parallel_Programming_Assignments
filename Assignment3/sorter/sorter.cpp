@@ -1,5 +1,4 @@
 // Loads a binary file containing 32-bit integers, sorts them, and writes them to a new file.
-#include <algorithm>
 #include <cstddef>
 #include <iostream>
 #include <fstream>
