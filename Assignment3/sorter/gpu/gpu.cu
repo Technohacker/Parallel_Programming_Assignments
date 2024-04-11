@@ -8,8 +8,8 @@
 
 // Performs a bitonic sort of consecutive blocks of elements on the GPU
 // Each block is sorted by a thread block
-// Every other block of elements is sorted in the opposite direction
-__global__ void bitonic_sort_pairwise(device_buffer_t<element_t> data) {
+// Every sort_direction_stride blocks are sorted in the opposite direction
+__global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t sort_direction_stride = 1, bool only_merge = false) {
     assert(blockDim.x == GPU_BLOCK_SIZE / 2);
 
     // Find the start index of the block
@@ -17,8 +17,8 @@ __global__ void bitonic_sort_pairwise(device_buffer_t<element_t> data) {
     // And the ID of this thread within the thread block
     const size_t worker_id = threadIdx.x;
 
-    // Calculate the direction for this pair
-    bool pair_ascending = blockIdx.x % 2 == 0;
+    // Calculate the direction for this block
+    bool block_ascending = (blockIdx.x / sort_direction_stride) % 2 == 0;
 
     // Load the block pair into shared memory
     __shared__ element_t shared_data[GPU_BLOCK_SIZE];
@@ -26,12 +26,15 @@ __global__ void bitonic_sort_pairwise(device_buffer_t<element_t> data) {
     shared_data[worker_id + GPU_BLOCK_SIZE / 2] = data[block_start + worker_id + GPU_BLOCK_SIZE / 2];
     __syncthreads();
 
+    // If only_merge is set, we can start from the last iteration of the outer loop
+    size_t sort_range_start = only_merge ? GPU_BLOCK_SIZE / 2 : 2;
+
     // Run an outer loop to sort a range of elements at a time
     // For each iteration, sort_range number of elements are sorted
-    for (size_t sort_range = 2; sort_range <= GPU_BLOCK_SIZE; sort_range *= 2) {
+    for (size_t sort_range = sort_range_start; sort_range <= GPU_BLOCK_SIZE; sort_range *= 2) {
         // Get the direction for this thread and iteration
         // The lower half of the threads sort one way, the upper half sort the other way
-        bool ascending = (worker_id / (sort_range / 2) % 2) != pair_ascending;
+        bool ascending = (worker_id / (sort_range / 2) % 2) != block_ascending;
 
         // Run an inner loop to compare and swap elements
         for (size_t compare_range = sort_range / 2; compare_range > 0; compare_range /= 2) {
@@ -45,7 +48,7 @@ __global__ void bitonic_sort_pairwise(device_buffer_t<element_t> data) {
             element_t compare = shared_data[compare_id];
 
             // Compare and swap the elements if necessary
-            if ((element > compare) == ascending) {
+            if ((element <= compare) != ascending) {
                 shared_data[element_id] = compare;
                 shared_data[compare_id] = element;
             }
@@ -67,13 +70,17 @@ __global__ void bitonic_sort_pairwise(device_buffer_t<element_t> data) {
 __global__ void bitonic_merge_global(device_buffer_t<element_t> data, size_t sort_range, size_t compare_range) {
     assert(blockDim.x == GPU_BLOCK_SIZE / 2);
 
-    size_t global_comparatorI = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t comparatorI = global_comparatorI & (data.size() / 2 - 1);
+    // Get the position of this thread within the array
+    size_t global_pos = blockIdx.x * blockDim.x + threadIdx.x;
+    // And the position relative to the half of the array it is in
+    size_t half_pos = global_pos & (data.size() / 2 - 1);
 
-    // Bitonic merge
-    bool ascending = comparatorI & (sort_range / 2) ? false : true;
+    // Check whether the elements should be sorted in ascending or descending order
+    bool ascending = half_pos & (sort_range / 2) ? false : true;
 
-    size_t element_id = 2 * global_comparatorI - (global_comparatorI & (compare_range - 1));
+    // Find the element for this thread
+    size_t element_id = 2 * global_pos - (global_pos & (compare_range - 1));
+    // And the element to compare with
     size_t compare_id = element_id + compare_range;
 
     // Load the elements to compare
@@ -81,7 +88,7 @@ __global__ void bitonic_merge_global(device_buffer_t<element_t> data, size_t sor
     element_t compare = data[compare_id];
 
     // Compare and swap the elements if necessary
-    if ((element > compare) == ascending) {
+    if ((element <= compare) != ascending) {
         data[element_id] = compare;
         data[compare_id] = element;
     }
@@ -93,7 +100,7 @@ __host__ void bitonic_sort(device_buffer_t<element_t> &data) {
 
     // First sort blockwise
     // Each block is sorted for use in later stages
-    bitonic_sort_pairwise<<<num_blocks, GPU_BLOCK_SIZE / 2>>>(data);
+    bitonic_sort_blockwise<<<num_blocks, GPU_BLOCK_SIZE / 2>>>(data);
     CUDA_CHECK(cudaPeekAtLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -104,13 +111,18 @@ __host__ void bitonic_sort(device_buffer_t<element_t> &data) {
 
     // For larger numbers of blocks, start with a sort_range of 2 blocks until the buffer size is reached
     for (size_t sort_range = 2 * GPU_BLOCK_SIZE; sort_range <= data.size(); sort_range *= 2) {
-        // Keep track of the comparison range
-        for (size_t compare_range = sort_range / 2; compare_range > 0; compare_range /= 2) {
-            // Launch the kernel to perform the bitonic merge
+        // Keep track of the comparison range only upto half a block
+        for (size_t compare_range = sort_range / 2; compare_range >= GPU_BLOCK_SIZE; compare_range /= 2) {
+            // Launch the kernel to perform a bitonic merge
             bitonic_merge_global<<<num_blocks, GPU_BLOCK_SIZE / 2>>>(data, sort_range, compare_range);
             CUDA_CHECK(cudaPeekAtLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
         }
+
+        // Once we're here, we can call the blockwise sort again, but only for merging
+        bitonic_sort_blockwise<<<num_blocks, GPU_BLOCK_SIZE / 2>>>(data, sort_range / GPU_BLOCK_SIZE, true);
+        CUDA_CHECK(cudaPeekAtLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
 }
 
