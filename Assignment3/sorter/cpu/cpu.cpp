@@ -1,36 +1,26 @@
 #include <algorithm>
 #include <cstddef>
-#include <vector>
 
 #include "cpu.h"
 
 // Performs a recursive merge sort on the given range of the data using OpenMP tasks
-void sort_range_cpu(std::vector<int> &data, range_t range) {
-    size_t num_elements = range.end - range.start;
-
+void sort_cpu(vector_view<element_t> data) {
     // Base case: if the range is below block size, sort it using std::sort
-    if (num_elements <= CPU_BLOCK_SIZE) {
-        std::sort(data.begin() + range.start, data.begin() + range.end);
+    if (data.size() <= CPU_BLOCK_SIZE) {
+        std::sort(data.begin(), data.end());
         return;
     }
 
     // Recursively sort the two halves of the range
-    size_t range_mid = range.start + num_elements / 2;
-    std::vector<range_t> left_ranges, right_ranges;
+    size_t range_mid = data.size() / 2;
 
-    range_t range_left = {
-        .start = range.start,
-        .end = range_mid,
-    };
-    range_t range_right = {
-        .start = range_mid,
-        .end = range.end,
-    };
+    vector_view<element_t> view_left = data.slice({0, range_mid});
+    vector_view<element_t> view_right = data.slice({range_mid, data.size()});
 
     #pragma omp task shared(data)
-    sort_range_cpu(data, range_left);
+    sort_cpu(view_left);
     #pragma omp task shared(data)
-    sort_range_cpu(data, range_right);
+    sort_cpu(view_right);
 
     #pragma omp taskwait
 

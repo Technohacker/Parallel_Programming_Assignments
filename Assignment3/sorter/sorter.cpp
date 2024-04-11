@@ -80,6 +80,10 @@ int main(int argc, char *argv[]) {
         gpu_range.end = num_gpu_elements;
     }
 
+    // Make the views
+    vector_view<element_t> cpu_view(data, cpu_range);
+    vector_view<element_t> gpu_view(data, gpu_range);
+
     // Start the timer
     timer t;
     t.start();
@@ -93,14 +97,14 @@ int main(int argc, char *argv[]) {
             #pragma omp task shared(data)
             {
                 std::cout << "CPU Start" << std::endl;
-                sort_range_cpu(data, cpu_range);
+                sort_cpu(cpu_view);
                 std::cout << "CPU End" << std::endl;
             }
 
             #pragma omp task shared(data)
             {
                 std::cout << "GPU Start" << std::endl;
-                sort_range_gpu(data, gpu_range);
+                sort_gpu(gpu_view);
                 std::cout << "GPU End" << std::endl;
             }
         }
@@ -108,7 +112,7 @@ int main(int argc, char *argv[]) {
 
     // Then finally merge the CPU and GPU sorted arrays
     std::cout << "Merge Start" << std::endl;
-    merge_ranges_cpu(data, {cpu_range, gpu_range});
+    // data = merge_ranges_cpu(data, {cpu_range, gpu_range});
     std::cout << "Merge End" << std::endl;
 
     // End the timer

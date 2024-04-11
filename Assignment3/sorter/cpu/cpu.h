@@ -3,4 +3,4 @@
 
 #include "../../common.h"
 
-void sort_range_cpu(std::vector<element_t> &data, range_t range);
+void sort_cpu(vector_view<element_t> data);

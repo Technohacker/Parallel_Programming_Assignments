@@ -144,9 +144,9 @@ size_t largest_power_of_two(size_t n) {
     return power;
 }
 
-__host__ void sort_range_gpu(std::vector<element_t> &data, range_t range) {
+__host__ void sort_gpu(vector_view<element_t> data) {
     // Get the number of elements to sort
-    size_t num_elements_total = range.end - range.start;
+    size_t num_elements_total = data.size();
 
     // Exit early if there are none
     if (num_elements_total == 0) {
@@ -182,8 +182,8 @@ __host__ void sort_range_gpu(std::vector<element_t> &data, range_t range) {
 
     // Allocate memory on the GPU for the blocks of data assigned to the GPU
     device_buffer_t<element_t> device_data;
-    // Also keep track of the ranges of the sorted blocks
-    std::vector<range_t> sorted_block_ranges;
+    // Also keep track of the views of the sorted blocks
+    std::vector<vector_view<element_t>> sorted_block_views;
 
     // Find the buffer size to use
     size_t buffer_blocks = std::min(num_blocks_total, max_blocks);
@@ -193,13 +193,18 @@ __host__ void sort_range_gpu(std::vector<element_t> &data, range_t range) {
             buffer_blocks = largest_power_of_two(num_blocks_total - i);
         }
 
+        vector_view<element_t> blocks = data.slice({
+            .start = i * GPU_BLOCK_SIZE,
+            .end = (i + buffer_blocks) * GPU_BLOCK_SIZE,
+        });
+
         // Reallocate the device buffer if the number of elements is different
-        if (device_data.size() != buffer_blocks * GPU_BLOCK_SIZE) {
-            device_data.reallocate(buffer_blocks * GPU_BLOCK_SIZE);
+        if (device_data.size() != blocks.size()) {
+            device_data.reallocate(blocks.size());
         }
 
         // Copy the blocks of data to the GPU
-        device_data.copy_to_device(&data[range.start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
+        device_data.copy_to_device(&blocks[0], blocks.size());
 
         // Launch the kernel to sort the blocks of data
         std::cout << "GPU Block Sort Start" << std::endl;
@@ -207,14 +212,13 @@ __host__ void sort_range_gpu(std::vector<element_t> &data, range_t range) {
         std::cout << "GPU Block Sort End" << std::endl;
 
         // Copy the sorted data back to the CPU
-        device_data.copy_from_device(&data[range.start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
+        device_data.copy_from_device(&blocks[0], blocks.size());
 
-        // And mark the range of this block
-        sorted_block_ranges.push_back({
-            .start = range.start + i * GPU_BLOCK_SIZE,
-            .end = range.start + (i + buffer_blocks) * GPU_BLOCK_SIZE
-        });
+        // And mark the view of these blocks
+        sorted_block_views.push_back(blocks);
     }
+
+    // TODO: Merge the sorted blocks back together
 
     return;
 }

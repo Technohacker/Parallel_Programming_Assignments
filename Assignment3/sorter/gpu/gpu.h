@@ -23,4 +23,4 @@ inline void cuda_check(cudaError_t code, const char *file, int line) {
   }
 }
 
-__host__ void sort_range_gpu(std::vector<element_t> &data, range_t range);
+__host__ void sort_gpu(vector_view<element_t> data);
