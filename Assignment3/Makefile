@@ -3,7 +3,7 @@ CXX := nvcc
 NVCC := nvcc
 
 CXXFLAGS := -Xcompiler -fopenmp -g
-CUFLAGS := -rdc=true -g
+CUFLAGS := -rdc=true -g -G
 
 all: inputgen/inputgen sorter/sorter verifier/verifier
 

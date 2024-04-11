@@ -18,8 +18,8 @@ __host__ __device__ size_t largest_power_of_two(size_t n) {
 // Performs a bitonic sort on consecutive blocks of elements
 // Each block of elements is sorted by a single thread block
 // The direction of the sort for a block is determined by the direction bit of the block index
-__global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t block_direction_bit_pos) {
-    assert(blockDim.x == GPU_BLOCK_SIZE / 2);
+__global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t outer_stride) {
+    assert(blockDim.x == GPU_BLOCK_SIZE);
 
     // Find the start index of the block
     const size_t block_start = blockIdx.x * blockDim.x;
@@ -27,17 +27,17 @@ __global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t b
     const size_t worker_id = threadIdx.x;
 
     // Calculate the direction for this block
-    // The masked bit of the thread block index determines the direction of the sort
-    bool block_ascending = (blockIdx.x & (1 << block_direction_bit_pos)) == 0;
+    // The outer stride specifies what stride the overall sort is at
+    bool block_ascending = (blockIdx.x / outer_stride) % 2 == 0;
 
     // Load the block of elements into shared memory
-    __shared__ element_t shared_data[GPU_BLOCK_SIZE / 2];
+    __shared__ element_t shared_data[GPU_BLOCK_SIZE];
     shared_data[worker_id] = data[block_start + worker_id];
     __syncthreads();
 
     // Run an outer loop to sort a range of elements at a time
     // For each iteration, sort_range number of elements are sorted
-    for (size_t sort_range = 2; sort_range <= GPU_BLOCK_SIZE / 2; sort_range *= 2) {
+    for (size_t sort_range = 2; sort_range <= GPU_BLOCK_SIZE; sort_range *= 2) {
         // Find the sort group we are working on
         const size_t sort_group_num = worker_id / sort_range;
         // And the ID of this thread within the sort group
@@ -81,27 +81,87 @@ __global__ void bitonic_sort_blockwise(device_buffer_t<element_t> data, size_t b
     data[block_start + worker_id] = shared_data[worker_id];
 }
 
-// __host__ void bitonic_sort_driver(device_buffer_t<element_t> &data, size_t range_start, size_t num_blocks) {
-//     // If there is only one block of elements, launch the kernel to sort the block
-//     if (num_blocks == 1) {
-//         bitonic_sort_kernel<<<1, GPU_BLOCK_SIZE>>>(data, range_start, 0);
-//         return;
-//     }
+// Performs a single stride of a bitonic sort on blocks of elements
+// Requires a call to bitonic_sort_blockwise between invocations of this kernel
+__global__ void bitonic_sort_large_stride(device_buffer_t<element_t> data, size_t stride) {
+    assert(blockDim.x == GPU_BLOCK_SIZE);
 
-//     // For larger numbers of blocks, start with a stride of 2 and go up to the number of blocks
-//     for (size_t stride = 2; stride <= num_blocks; stride *= 2) {
-//         // At each stride, perform a bitonic sort on the blocks of elements
-//         bitonic_sort_kernel<<<num_blocks, GPU_BLOCK_SIZE>>>(data, range_start, stride - 1);
+    // Find the start index of the range
+    const size_t range_start = blockIdx.x * blockDim.x * stride;
+    // And the ID of this thread within the range
+    const size_t worker_id = threadIdx.x;
 
-//         // Wait for the kernel to finish
-//         CUDA_CHECK(cudaPeekAtLastError());
-//         CUDA_CHECK(cudaDeviceSynchronize());
+    // Calculate the direction for this range
+    // Every other thread block sorts in the opposite direction
+    const bool range_ascending = blockIdx.x % 2 == 0;
 
-//         // Then launch a kernel to merge the blocks of elements
-//         bitonic_merge_kernel<<<num_blocks, GPU_BLOCK_SIZE>>>(data, range_start, stride);
+    // Find the sort range for this stride
+    const size_t sort_range = stride * GPU_BLOCK_SIZE;
 
-//     }
-// }
+    // Run a loop to imitate the presence of sort_range / 2 threads
+    for (size_t virtual_thread_id = worker_id; virtual_thread_id < sort_range / 2; virtual_thread_id += GPU_BLOCK_SIZE) {
+        // Find the sort group we are working on
+        const size_t sort_group_num = virtual_thread_id / sort_range;
+        // And the ID of this thread within the sort group
+        size_t sort_group_id = virtual_thread_id % sort_range;
+
+        // Every other group of elements is sorted in the opposite direction
+        const bool ascending = sort_group_num % 2 == 0 ? range_ascending : !range_ascending;
+
+        // Run an inner loop to compare and swap elements
+        for (size_t compare_range = sort_range; compare_range > 1; compare_range /= 2) {
+            // Find the comparison group we are working on
+            const size_t compare_group_num = sort_group_id / compare_range;
+            // And the ID of this thread within the comparison group
+            const size_t compare_group_id = sort_group_id % compare_range;
+
+            // Calculate the index of the element this thread is assigned to
+            const size_t element_id = sort_group_num * GPU_BLOCK_SIZE + compare_group_num * compare_range + compare_group_id;
+            // And the index of the element to compare with using bitwise XOR
+            const size_t compare_id = element_id ^ (compare_range / 2);
+
+            // Make sure the compare_id is not behind the element_id
+            if (element_id < compare_id) {
+                // Load the elements to compare
+                const element_t element = data[range_start + element_id];
+                const element_t compare = data[range_start + compare_id];
+
+                // Compare and swap the elements if necessary
+                if ((element > compare) == ascending) {
+                    data[range_start + element_id] = compare;
+                    data[range_start + compare_id] = element;
+                }
+            }
+            __syncthreads();
+        }
+        __syncthreads();
+    }
+}
+
+__host__ void bitonic_sort_driver(device_buffer_t<element_t> &data, size_t num_blocks) {
+    // First sort the blocks of elements using the blockwise sort kernel
+    bitonic_sort_blockwise<<<num_blocks, GPU_BLOCK_SIZE>>>(data, 1);
+
+    // If there is only one block of elements, there is nothing more to do
+    if (num_blocks == 1) {
+        return;
+    }
+
+    // For larger numbers of blocks, start with a stride of 2 and go up to the number of blocks
+    for (size_t stride = 2; stride <= 4; stride *= 2) {
+        // Launch the kernel to sort the blocks of elements
+        bitonic_sort_large_stride<<<num_blocks / stride, GPU_BLOCK_SIZE>>>(data, stride);
+        // Wait for the kernel to finish
+        CUDA_CHECK(cudaPeekAtLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        // Then run the blockwise sort kernel to sort the elements within each block
+        bitonic_sort_blockwise<<<num_blocks, GPU_BLOCK_SIZE>>>(data, stride);
+        // Wait for the kernel to finish
+        CUDA_CHECK(cudaPeekAtLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+    }
+}
 
 // Merges the sorted blocks of data on the CPU recursively using OpenMP tasks
 void do_final_merge(std::vector<element_t> &data, std::vector<size_t> &sorted_block_starts, size_t start, size_t end) {
@@ -170,10 +230,7 @@ __host__ void sort_range_gpu(std::vector<element_t> &data, size_t range_start, s
 
         // Launch the kernel to sort the blocks of data
         std::cout << "GPU Block Sort Start" << std::endl;
-        bitonic_sort_blockwise<<<buffer_size / (GPU_BLOCK_SIZE / 2), GPU_BLOCK_SIZE / 2>>>(device_data, 0);
-        // Wait for the kernel to finish
-        CUDA_CHECK(cudaPeekAtLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
+        bitonic_sort_driver(device_data, buffer_size / GPU_BLOCK_SIZE);
         std::cout << "GPU Block Sort End" << std::endl;
 
         // Copy the sorted data back to the CPU
