@@ -3,6 +3,8 @@
 #include <iostream>
 #include <vector>
 
+#include "../cpu/cpu.h"
+
 #include "device_buffer.h"
 #include "gpu.h"
 
@@ -94,9 +96,16 @@ __global__ void bitonic_merge_global(device_buffer_t<element_t> data, size_t sor
     }
 }
 
+bool is_power_of_two(size_t n) {
+    return (n & (n - 1)) == 0;
+}
+
 __host__ void bitonic_sort(device_buffer_t<element_t> &data) {
     // Calculate the number of blocks of elements
     size_t num_blocks = data.size() / GPU_BLOCK_SIZE;
+
+    // Ensure that it's a power of two
+    assert(is_power_of_two(num_blocks));
 
     // First sort blockwise
     // Each block is sorted for use in later stages
@@ -135,25 +144,20 @@ size_t largest_power_of_two(size_t n) {
     return power;
 }
 
-bool is_power_of_two(size_t n) {
-    return (n & (n - 1)) == 0;
-}
-
-__host__ std::vector<size_t> sort_range_gpu(std::vector<element_t> &data, size_t range_start, size_t range_end) {
+__host__ void sort_range_gpu(std::vector<element_t> &data, range_t range) {
     // Get the number of elements to sort
-    size_t num_elements_total = range_end - range_start;
+    size_t num_elements_total = range.end - range.start;
 
     // Exit early if there are none
     if (num_elements_total == 0) {
-        return std::vector<size_t>();
+        return;
     }
 
-    // Find the number of blocks, and check that it is a power of two greater than zero
+    // Find the number of blocks. This may not be a power of two
     assert(num_elements_total % GPU_BLOCK_SIZE == 0);
 
     size_t num_blocks_total = num_elements_total / GPU_BLOCK_SIZE;
     assert(num_blocks_total > 0);
-    assert(is_power_of_two(num_blocks_total));
 
     // Check if there are indeed any CUDA devices
     int device_count;
@@ -178,19 +182,24 @@ __host__ std::vector<size_t> sort_range_gpu(std::vector<element_t> &data, size_t
 
     // Allocate memory on the GPU for the blocks of data assigned to the GPU
     device_buffer_t<element_t> device_data;
-    // Also keep track of where the sorted blocks start
-    std::vector<size_t> sorted_block_starts;
+    // Also keep track of the ranges of the sorted blocks
+    std::vector<range_t> sorted_block_ranges;
 
     // Find the buffer size to use
     size_t buffer_blocks = std::min(num_blocks_total, max_blocks);
     for (size_t i = 0; i < num_blocks_total; i += buffer_blocks) {
+        // If we will overshoot the end of the range, reduce the buffer size to the next power of two
+        if (i + buffer_blocks > num_blocks_total) {
+            buffer_blocks = largest_power_of_two(num_blocks_total - i);
+        }
+
         // Reallocate the device buffer if the number of elements is different
         if (device_data.size() != buffer_blocks * GPU_BLOCK_SIZE) {
             device_data.reallocate(buffer_blocks * GPU_BLOCK_SIZE);
         }
 
         // Copy the blocks of data to the GPU
-        device_data.copy_to_device(&data[range_start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
+        device_data.copy_to_device(&data[range.start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
 
         // Launch the kernel to sort the blocks of data
         std::cout << "GPU Block Sort Start" << std::endl;
@@ -198,10 +207,14 @@ __host__ std::vector<size_t> sort_range_gpu(std::vector<element_t> &data, size_t
         std::cout << "GPU Block Sort End" << std::endl;
 
         // Copy the sorted data back to the CPU
-        device_data.copy_from_device(&data[range_start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
-        // And mark the start index of the sorted block
-        sorted_block_starts.push_back(range_start + i * GPU_BLOCK_SIZE);
+        device_data.copy_from_device(&data[range.start + i * GPU_BLOCK_SIZE], buffer_blocks * GPU_BLOCK_SIZE);
+
+        // And mark the range of this block
+        sorted_block_ranges.push_back({
+            .start = range.start + i * GPU_BLOCK_SIZE,
+            .end = range.start + (i + buffer_blocks) * GPU_BLOCK_SIZE
+        });
     }
 
-    return sorted_block_starts;
+    return;
 }

@@ -44,24 +44,27 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    // Ensure that the file is divisible into blocks
+    // Get the file's size
     in_file.seekg(0, std::ios::end);
     size_t file_size = in_file.tellg();
+    size_t num_elements = file_size / ELEMENT_SIZE;
 
     // Read the file into memory
     in_file.seekg(0, std::ios::beg);
-    std::vector<int> data(file_size / ELEMENT_SIZE);
+    std::vector<element_t> data(num_elements);
     in_file.read(reinterpret_cast<char*>(data.data()), file_size);
     in_file.close();
 
     std::cout << "File Read" << std::endl;
 
-    size_t num_elements = file_size / ELEMENT_SIZE;
-
-    size_t cpu_range_start = 0;
-    size_t cpu_range_end = num_elements;
-    size_t gpu_range_start = 0;
-    size_t gpu_range_end = 0;
+    range_t cpu_range = {
+        .start = 0,
+        .end = num_elements
+    };
+    range_t gpu_range = {
+        .start = 0,
+        .end = 0
+    };
 
     // Check if the GPU should be used
     if (cfg.use_gpu) {
@@ -73,13 +76,14 @@ int main(int argc, char *argv[]) {
         num_gpu_elements = num_gpu_blocks * GPU_BLOCK_SIZE;
 
         // Adjust the ranges for the CPU and GPU, giving the GPU the first portion of the data
-        cpu_range_start = num_gpu_elements;
-        gpu_range_end = num_gpu_elements;
+        cpu_range.start = num_gpu_elements;
+        gpu_range.end = num_gpu_elements;
     }
 
     // Start the timer
     timer t;
     t.start();
+
     #pragma omp parallel
     {
         #pragma omp single nowait
@@ -89,14 +93,14 @@ int main(int argc, char *argv[]) {
             #pragma omp task shared(data)
             {
                 std::cout << "CPU Start" << std::endl;
-                sort_range_cpu(data, cpu_range_start, cpu_range_end);
+                sort_range_cpu(data, cpu_range);
                 std::cout << "CPU End" << std::endl;
             }
 
             #pragma omp task shared(data)
             {
                 std::cout << "GPU Start" << std::endl;
-                sort_range_gpu(data, gpu_range_start, gpu_range_end);
+                sort_range_gpu(data, gpu_range);
                 std::cout << "GPU End" << std::endl;
             }
         }
@@ -104,7 +108,7 @@ int main(int argc, char *argv[]) {
 
     // Then finally merge the CPU and GPU sorted arrays
     std::cout << "Merge Start" << std::endl;
-    // std::inplace_merge(data.begin() + cpu_range_start, data.begin() + gpu_range_end, data.end());
+    merge_ranges_cpu(data, {cpu_range, gpu_range});
     std::cout << "Merge End" << std::endl;
 
     // End the timer

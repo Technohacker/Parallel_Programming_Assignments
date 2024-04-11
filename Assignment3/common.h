@@ -4,6 +4,8 @@
 // The type of elements in the input file
 typedef int element_t;
 
+// A range of elements, [start, end)
+// Both are in terms of elements, not bytes
 struct range_t {
     size_t start;
     size_t end;
