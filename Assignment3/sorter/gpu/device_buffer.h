@@ -49,8 +49,11 @@ public:
         CUDA_CHECK(cudaMemcpy(host_buf, this->buf, num_elements * sizeof(T), cudaMemcpyDeviceToHost));
     }
 
-    __device__ T& operator[](int index) {
-        assert(index < this->num_elements);
+    __device__ T& operator[](size_t index) {
+        if (index >= this->num_elements) {
+            printf("Index %ld out of bounds [0, %ld)\n", index, this->num_elements);
+            assert(false);
+        }
         return this->buf[index];
     }
     __host__ __device__ inline size_t size() {
