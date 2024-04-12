@@ -144,13 +144,13 @@ size_t largest_power_of_two(size_t n) {
     return power;
 }
 
-__host__ void sort_gpu(vector_view<element_t> data) {
+__host__ std::vector<element_t> sort_gpu(vector_view<element_t> data) {
     // Get the number of elements to sort
     size_t num_elements_total = data.size();
 
     // Exit early if there are none
     if (num_elements_total == 0) {
-        return;
+        return std::vector<element_t>();
     }
 
     // Find the number of blocks. This may not be a power of two
@@ -219,10 +219,5 @@ __host__ void sort_gpu(vector_view<element_t> data) {
     }
 
     // Merge the sorted blocks back together
-    std::vector<element_t> sorted_data = merge_multiple(sorted_block_views);
-
-    // Copy the sorted data back to the input
-    std::copy(sorted_data.begin(), sorted_data.end(), data.begin());
-
-    return;
+    return merge_multiple(sorted_block_views);
 }

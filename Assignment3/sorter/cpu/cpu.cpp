@@ -5,7 +5,7 @@
 
 #include "cpu.h"
 
-void sort_cpu(vector_view<element_t> data) {
+std::vector<element_t> sort_cpu(vector_view<element_t> data) {
     // Form views for each block of the data
     std::vector<vector_view<element_t>> block_views;
     for (size_t i = 0; i < data.size(); i += CPU_BLOCK_SIZE) {
@@ -28,10 +28,7 @@ void sort_cpu(vector_view<element_t> data) {
     // Then merge all the blocks into a single sorted range
     vector_view<vector_view<element_t>> block_views_view(block_views);
 
-    std::vector<element_t> result = merge_multiple(block_views_view);
-
-    // Copy the result back into the original data
-    std::copy(result.begin(), result.end(), data.begin());
+    return merge_multiple(block_views_view);
 }
 
 // Merges multiple sorted ranges of data into a single sorted range in parallel
@@ -45,8 +42,7 @@ std::vector<element_t> merge_multiple(vector_view<vector_view<element_t>> views)
         return std::vector<element_t>();
     } else if (views.size() == 1) {
         // If there is only one range, return it
-        std::vector<element_t> result(views[0].begin(), views[0].end());
-        return result;
+        return std::vector<element_t>(views[0].begin(), views[0].end());
     } else if (views.size() == 2) {
         // If there are two ranges, merge them
         std::vector<element_t> result(total_size);
@@ -62,9 +58,9 @@ std::vector<element_t> merge_multiple(vector_view<vector_view<element_t>> views)
         std::vector<element_t> left_result, right_result;
 
         #pragma omp task shared(left_result)
-        left_result = merge_multiple(left_views);
+        left_result = std::move(merge_multiple(left_views));
         #pragma omp task shared(right_result)
-        right_result = merge_multiple(right_views);
+        right_result = std::move(merge_multiple(right_views));
 
         #pragma omp taskwait
 

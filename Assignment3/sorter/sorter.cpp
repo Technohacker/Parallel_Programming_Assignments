@@ -93,35 +93,32 @@ int main(int argc, char *argv[]) {
     {
         #pragma omp single nowait
         {
+            std::vector<element_t> cpu_result, gpu_result;
+
             // Launch two OpenMP tasks to blockwise sort the data on the CPU and GPU
             // Once each block is sorted, the CPU will merge sort the two parts
-            #pragma omp task
+            #pragma omp task shared(cpu_result)
             {
                 std::cout << "CPU Start" << std::endl;
-                sort_cpu(cpu_view);
+                cpu_result = std::move(sort_cpu(cpu_view));
                 std::cout << "CPU End" << std::endl;
             }
 
-            #pragma omp task
+            #pragma omp task shared(gpu_result)
             {
                 std::cout << "GPU Start" << std::endl;
-                sort_gpu(gpu_view);
+                gpu_result = std::move(sort_gpu(gpu_view));
                 std::cout << "GPU End" << std::endl;
             }
 
             #pragma omp taskwait
 
             // Then finally launch a task to merge the two sorted parts
-            #pragma omp task shared(data)
+            #pragma omp task shared(cpu_result, gpu_result, data)
             {
-                // First allocate a result vector
-                std::vector<element_t> result(data.size());
-
                 std::cout << "Merge Start" << std::endl;
-                merge_pair(cpu_view, gpu_view, result);
+                merge_pair(cpu_result, gpu_result, data);
                 std::cout << "Merge End" << std::endl;
-
-                data = result;
             }
         }
     }
