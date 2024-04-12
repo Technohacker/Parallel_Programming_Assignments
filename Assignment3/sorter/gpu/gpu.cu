@@ -144,13 +144,13 @@ size_t largest_power_of_two(size_t n) {
     return power;
 }
 
-__host__ std::vector<element_t> sort_gpu(vector_view<element_t> data) {
+__host__ void sort_gpu(vector_view<element_t> &data, vector_view<element_t> &result) {
     // Get the number of elements to sort
     size_t num_elements_total = data.size();
 
     // Exit early if there are none
     if (num_elements_total == 0) {
-        return std::vector<element_t>();
+        return;
     }
 
     // Find the number of blocks. This may not be a power of two
@@ -180,6 +180,8 @@ __host__ std::vector<element_t> sort_gpu(vector_view<element_t> data) {
         std::exit(1);
     }
 
+    std::cout << "GPU Blocks: " << num_blocks_total << " Max Blocks: " << max_blocks << std::endl;
+
     // Allocate memory on the GPU for the blocks of data assigned to the GPU
     device_buffer_t<element_t> device_data;
     // Also keep track of the views of the sorted blocks
@@ -207,9 +209,9 @@ __host__ std::vector<element_t> sort_gpu(vector_view<element_t> data) {
         device_data.copy_to_device(&blocks[0], blocks.size());
 
         // Launch the kernel to sort the blocks of data
-        std::cout << "GPU Block Sort Start" << std::endl;
+        std::cout << "GPU Large Block Sort Start" << std::endl;
         bitonic_sort(device_data);
-        std::cout << "GPU Block Sort End" << std::endl;
+        std::cout << "GPU Large Block Sort End" << std::endl;
 
         // Copy the sorted data back to the CPU
         device_data.copy_from_device(&blocks[0], blocks.size());
@@ -219,5 +221,13 @@ __host__ std::vector<element_t> sort_gpu(vector_view<element_t> data) {
     }
 
     // Merge the sorted blocks back together
-    return merge_multiple(sorted_block_views);
+    vector_view<vector_view<element_t>> sorted_block_views_view(sorted_block_views);
+    
+    std::cout << "GPU Merge Start" << std::endl;
+    #pragma omp task shared(result)
+    {
+        merge_multiple(sorted_block_views_view, result);
+    }
+    #pragma omp taskwait
+    std::cout << "GPU Merge End" << std::endl;
 }

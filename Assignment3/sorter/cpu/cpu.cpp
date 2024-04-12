@@ -1,12 +1,14 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <iostream>
 #include <vector>
 
 #include "cpu.h"
 
-std::vector<element_t> sort_cpu(vector_view<element_t> data) {
+void sort_cpu(vector_view<element_t> &data, vector_view<element_t> &result) {
     // Form views for each block of the data
+    std::cout << "CPU Block view start" << std::endl;
     std::vector<vector_view<element_t>> block_views;
     for (size_t i = 0; i < data.size(); i += CPU_BLOCK_SIZE) {
         range_t block_range = {
@@ -16,38 +18,53 @@ std::vector<element_t> sort_cpu(vector_view<element_t> data) {
 
         block_views.push_back(data.slice(block_range));
     }
+    std::cout << "CPU Block view end" << std::endl;
 
     // Sort each block in parallel
-    #pragma omp taskloop
+    std::cout << "CPU Block Sort start" << std::endl;
+    #pragma omp taskloop shared(block_views)
     for (size_t i = 0; i < block_views.size(); i++) {
         std::sort(block_views[i].begin(), block_views[i].end());
     }
-
     #pragma omp taskwait
+    std::cout << "CPU Block Sort end" << std::endl;
 
     // Then merge all the blocks into a single sorted range
-    vector_view<vector_view<element_t>> block_views_view(block_views);
+    std::cout << "CPU Merge start" << std::endl;
+    #pragma omp task shared(result)
+    {
+        vector_view<vector_view<element_t>> block_views_view(block_views);
+        vector_view<element_t> result_view(result);
 
-    return merge_multiple(block_views_view);
+        merge_multiple(block_views_view, result_view);
+    }
+    #pragma omp taskwait
+    std::cout << "CPU Merge end" << std::endl;
 }
 
 // Merges multiple sorted ranges of data into a single sorted range in parallel
-std::vector<element_t> merge_multiple(vector_view<vector_view<element_t>> views) {
+void merge_multiple(vector_view<vector_view<element_t>> &views, vector_view<element_t> &result) {
+    // Ensure that the result is not from the same container as any input
+    // and that the views are contiguous
     size_t total_size = 0;
     for (size_t i = 0; i < views.size(); i++) {
+        assert(!views[i].from_same_container(result));
+        if (i > 0) {
+            assert(views[i - 1].is_contiguous(views[i]));
+        }
+
         total_size += views[i].size();
     }
+    assert(total_size == result.size());
 
     if (total_size == 0) {
-        return std::vector<element_t>();
+        // If there is no data, there's nothing to do
     } else if (views.size() == 1) {
-        // If there is only one range, return it
-        return std::vector<element_t>(views[0].begin(), views[0].end());
+        // If there is only one range, copy it into the result
+        std::copy(views[0].begin(), views[0].end(), result.begin());
     } else if (views.size() == 2) {
         // If there are two ranges, merge them
-        std::vector<element_t> result(total_size);
         merge_pair(views[0], views[1], result);
-        return result;
     } else {
         // Otherwise, split the views into two halves and merge them recursively
         size_t mid = views.size() / 2;
@@ -55,23 +72,51 @@ std::vector<element_t> merge_multiple(vector_view<vector_view<element_t>> views)
         vector_view<vector_view<element_t>> left_views = views.slice({0, mid});
         vector_view<vector_view<element_t>> right_views = views.slice({mid, views.size()});
 
-        std::vector<element_t> left_result, right_result;
+        vector_view<element_t> left_contiguous_view, right_contiguous_view;
 
-        #pragma omp task shared(left_result)
-        left_result = std::move(merge_multiple(left_views));
-        #pragma omp task shared(right_result)
-        right_result = std::move(merge_multiple(right_views));
+        // Construct the consolidated views for the two halves of the result
+        if (left_views.size() > 0) {
+            left_contiguous_view = left_views[0];
+            for (size_t i = 1; i < left_views.size(); i++) {
+                left_contiguous_view = left_contiguous_view.merge(left_views[i]);
+            }
+        }
 
+        if (right_views.size() > 0) {
+            right_contiguous_view = right_views[0];
+            for (size_t i = 1; i < right_views.size(); i++) {
+                right_contiguous_view = right_contiguous_view.merge(right_views[i]);
+            }
+        }
+
+        assert(left_contiguous_view.is_contiguous(right_contiguous_view));
+        assert(left_contiguous_view.size() + right_contiguous_view.size() == result.size());
+
+        // Create the views for the two halves of the result
+        vector_view<element_t> left_result = result.slice({0, left_contiguous_view.size()});
+        vector_view<element_t> right_result = result.slice({left_contiguous_view.size(), result.size()});
+
+        #pragma omp task shared(left_result, left_views)
+        {
+            merge_multiple(left_views, left_result);
+        }
+        #pragma omp task shared(right_result, right_views)
+        {
+            merge_multiple(right_views, right_result);
+        }
         #pragma omp taskwait
 
-        std::vector<element_t> result(total_size);
-        merge_pair(left_result, right_result, result);
-        return result;
+        // Copy the result of the halves into the contiguous views
+        std::copy(left_result.begin(), left_result.end(), left_contiguous_view.begin());
+        std::copy(right_result.begin(), right_result.end(), right_contiguous_view.begin());
+
+        // Then merge the two halves of the result
+        merge_pair(left_contiguous_view, right_contiguous_view, result);
     }
 }
 
 // Merges two sorted ranges of data into a single sorted range in parallel
-void merge_pair(vector_view<element_t> A, vector_view<element_t> B, vector_view<element_t> result) {
+void merge_pair(vector_view<element_t> &A, vector_view<element_t> &B, vector_view<element_t> &result) {
     // Ensure that the result is not from the same container as either input
     assert(!A.from_same_container(result));
     assert(!B.from_same_container(result));
@@ -109,9 +154,12 @@ void merge_pair(vector_view<element_t> A, vector_view<element_t> B, vector_view<
     vector_view<element_t> result_right = result.slice({mid + range_mid, result.size()});
 
     #pragma omp task
-    merge_pair(smaller_left, larger_left, result_left);
+    {
+        merge_pair(smaller_left, larger_left, result_left);
+    }
     #pragma omp task
-    merge_pair(smaller_right, larger_right, result_right);
-
+    {
+        merge_pair(smaller_right, larger_right, result_right);
+    }
     #pragma omp taskwait
 }

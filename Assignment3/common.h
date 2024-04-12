@@ -16,14 +16,16 @@ struct range_t {
 template<typename C>
 class view {
 private:
-    C &container;
+    C *container;
     range_t range;
 public:
-    view(C &container) : container(container), range(range_t { .start = 0, .end = container.size() }) {}
-    view(C &container, range_t range) : container(container), range(range) {}
+    view() : container(nullptr), range(range_t { .start = 0, .end = 0 }) {}
+    view(C &container) : container(&container), range(range_t { .start = 0, .end = container.size() }) {}
+    view(C &container, range_t range) : container(&container), range(range) {}
 
     auto &operator[](size_t i) {
-        return container[range.start + i];
+        assert(container != nullptr);
+        return (*container)[range.start + i];
     }
 
     size_t size() {
@@ -31,15 +33,21 @@ public:
     }
 
     auto begin() {
-        return container.begin() + range.start;
+        assert(container != nullptr);
+        return (*container).begin() + range.start;
     }
 
     auto end() {
-        return container.begin() + range.end;
+        assert(container != nullptr);
+        return (*container).begin() + range.end;
     }
 
     bool from_same_container(view<C> &other) {
-        return &container == &other.container;
+        return (container == other.container) && (container != nullptr);
+    }
+
+    bool is_contiguous(view<C> &other) {
+        return from_same_container(other) && range.end == other.range.start;
     }
 
     view<C> slice(range_t new_range) {
@@ -47,7 +55,26 @@ public:
             .start = range.start + new_range.start,
             .end = range.start + new_range.end,
         };
-        return view<C>(container, final_range);
+
+        view<C> new_view;
+        new_view.container = container;
+        new_view.range = final_range;
+        return new_view;
+    }
+
+    view<C> merge(view<C> &other) {
+        // Ensure that the views are contiguous and from the same container
+        assert(is_contiguous(other));
+
+        range_t final_range = {
+            .start = range.start,
+            .end = other.range.end,
+        };
+
+        view<C> new_view;
+        new_view.container = container;
+        new_view.range = final_range;
+        return new_view;
     }
 };
 

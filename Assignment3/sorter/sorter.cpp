@@ -48,12 +48,14 @@ int main(int argc, char *argv[]) {
     long num_elements;
     in_file.read(reinterpret_cast<char*>(&num_elements), sizeof(long));
 
-    // Read the file into memory
+    // Read the file into memory, while also allocating space for a merge buffer
     std::vector<element_t> data(num_elements);
+    std::vector<element_t> merge_buffer(num_elements);
+
+    std::cout << "File Read Start" << std::endl;
     in_file.read(reinterpret_cast<char*>(data.data()), num_elements * ELEMENT_SIZE);
     in_file.close();
-
-    std::cout << "File Read" << std::endl;
+    std::cout << "File Read End" << std::endl;
 
     range_t cpu_range = {
         .start = 0,
@@ -78,12 +80,16 @@ int main(int argc, char *argv[]) {
     gpu_range.end = num_gpu_elements;
 
     // Make the views
-    vector_view<element_t> cpu_view(data, cpu_range);
-    vector_view<element_t> gpu_view(data, gpu_range);
+    vector_view<element_t> data_view(data);
+    vector_view<element_t> data_cpu_view(data, cpu_range);
+    vector_view<element_t> data_gpu_view(data, gpu_range);
+
+    vector_view<element_t> merge_buffer_cpu_view(merge_buffer, cpu_range);
+    vector_view<element_t> merge_buffer_gpu_view(merge_buffer, gpu_range);
 
     std::cout << "Views Created" << std::endl;
-    std::cout << "CPU Size: " << cpu_view.size() << std::endl;
-    std::cout << "GPU Size: " << gpu_view.size() << std::endl;
+    std::cout << "CPU Range: " << cpu_range.start << " - " << cpu_range.end << std::endl;
+    std::cout << "GPU Range: " << gpu_range.start << " - " << gpu_range.end << std::endl;
 
     // Start the timer
     timer t;
@@ -93,31 +99,29 @@ int main(int argc, char *argv[]) {
     {
         #pragma omp single nowait
         {
-            std::vector<element_t> cpu_result, gpu_result;
-
             // Launch two OpenMP tasks to blockwise sort the data on the CPU and GPU
             // Once each block is sorted, the CPU will merge sort the two parts
-            #pragma omp task shared(cpu_result)
+            #pragma omp task shared(data_cpu_view, merge_buffer_cpu_view)
             {
                 std::cout << "CPU Start" << std::endl;
-                cpu_result = std::move(sort_cpu(cpu_view));
+                sort_cpu(data_cpu_view, merge_buffer_cpu_view);
                 std::cout << "CPU End" << std::endl;
             }
 
-            #pragma omp task shared(gpu_result)
+            #pragma omp task shared(data_gpu_view, merge_buffer_gpu_view)
             {
                 std::cout << "GPU Start" << std::endl;
-                gpu_result = std::move(sort_gpu(gpu_view));
+                sort_gpu(data_gpu_view, merge_buffer_gpu_view);
                 std::cout << "GPU End" << std::endl;
             }
 
             #pragma omp taskwait
 
             // Then finally launch a task to merge the two sorted parts
-            #pragma omp task shared(cpu_result, gpu_result, data)
+            #pragma omp task shared(merge_buffer_cpu_view, merge_buffer_gpu_view, data_view)
             {
                 std::cout << "Merge Start" << std::endl;
-                merge_pair(cpu_result, gpu_result, data);
+                merge_pair(merge_buffer_cpu_view, merge_buffer_gpu_view, data_view);
                 std::cout << "Merge End" << std::endl;
             }
         }
@@ -127,7 +131,7 @@ int main(int argc, char *argv[]) {
     t.end();
 
     // Print the elapsed time
-    std::cout << "Elapsed time: " << t.elapsed() << " seconds" << std::endl;
+    std::cout << std::endl << "Elapsed time: " << t.elapsed() << " seconds" << std::endl;
 
     // Write the sorted data to the output file
     std::ofstream out_file(cfg.out_file_path, std::ios::binary);
