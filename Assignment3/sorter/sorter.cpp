@@ -45,21 +45,19 @@ int main(int argc, char *argv[]) {
     }
 
     // Get the file's size
-    in_file.seekg(0, std::ios::end);
-    size_t file_size = in_file.tellg();
-    size_t num_elements = file_size / ELEMENT_SIZE;
+    long num_elements;
+    in_file.read(reinterpret_cast<char*>(&num_elements), sizeof(long));
 
     // Read the file into memory
-    in_file.seekg(0, std::ios::beg);
     std::vector<element_t> data(num_elements);
-    in_file.read(reinterpret_cast<char*>(data.data()), file_size);
+    in_file.read(reinterpret_cast<char*>(data.data()), num_elements * ELEMENT_SIZE);
     in_file.close();
 
     std::cout << "File Read" << std::endl;
 
     range_t cpu_range = {
         .start = 0,
-        .end = num_elements
+        .end = (size_t) num_elements
     };
     range_t gpu_range = {
         .start = 0,
@@ -136,7 +134,8 @@ int main(int argc, char *argv[]) {
 
     // Write the sorted data to the output file
     std::ofstream out_file(cfg.out_file_path, std::ios::binary);
-    out_file.write(reinterpret_cast<char*>(data.data()), file_size);
+    out_file.write(reinterpret_cast<char*>(&num_elements), sizeof(long));
+    out_file.write(reinterpret_cast<char*>(data.data()), num_elements * ELEMENT_SIZE);
     out_file.close();
 
     return 0;

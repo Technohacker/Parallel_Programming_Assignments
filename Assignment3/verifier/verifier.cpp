@@ -40,6 +40,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    long original_num_elements, sorted_num_elements;
+    original.read(reinterpret_cast<char*>(&original_num_elements), sizeof(long));
+    sorted.read(reinterpret_cast<char*>(&sorted_num_elements), sizeof(long));
+
+    if (original_num_elements != sorted_num_elements) {
+        std::cerr << "Original file has " << original_num_elements << " elements, but sorted file has " << sorted_num_elements << " elements." << std::endl;
+        return 1;
+    }
+
     freq_t *histogram = new freq_t();
 
     element_t elem, last_elem;
@@ -77,7 +86,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::cout << "Files are identical." << std::endl;
+    std::cout << "Files match." << std::endl;
     delete histogram;
 
     return 0;

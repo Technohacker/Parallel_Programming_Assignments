@@ -27,6 +27,9 @@ int main(int argc, char *argv[]) {
     std::mt19937 gen(seed);
     std::uniform_int_distribution<element_t> dist;
 
+    long num_elems_long = (long) num_elems;
+    out.write(reinterpret_cast<char*>(&num_elems_long), sizeof(long));
+
     for (size_t i = 0; i < num_elems; i++) {
         element_t elem = dist(gen);
         out.write(reinterpret_cast<char*>(&elem), ELEMENT_SIZE);
