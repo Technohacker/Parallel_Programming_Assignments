@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::cout << "Files match." << std::endl;
+    std::cout << "File is correctly sorted." << std::endl;
     delete histogram;
 
     return 0;
